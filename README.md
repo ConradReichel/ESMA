@@ -25,7 +25,7 @@ Die Bicep-Vorlage in `infra/main.bicep` stellt eine Azure Static Web App Standar
 
 Kopiere `infra/main.parameters.example.json` nach `infra/main.parameters.json`, setze ein starkes Datenbankpasswort und ergänze bei Bedarf Wix-Zugangsdaten (die echte Parameterdatei ist in `.gitignore`). Infrastruktur bereitstellen: `az deployment group create --resource-group <resource-group> --template-file infra/main.bicep --parameters @infra/main.parameters.json`. Lege für die GitHub Actions das Static-Web-Apps-Deploymenttoken als Repository-Secret `AZURE_STATIC_WEB_APPS_API_TOKEN` an. Der Workflow baut Flutter und Functions und veröffentlicht beides.
 
-Die API wendet `database/schema.sql` beim ersten Function-Aufruf idempotent an; `database/apply.sh` ist für manuelle Migrationen verfügbar. Die Vorlage gestattet PostgreSQL-Zugriff vom Azure-Dienstnetz (Firewallregel `0.0.0.0`); der Datenbankzugang ist zusätzlich mit TLS und Passwort geschützt. Für produktive Anforderungen an Netzwerkisolation muss die API auf einen Host mit privatem Datenbankzugang umgestellt werden.
+Die API wendet `database/schema.sql` beim ersten Function-Aufruf idempotent an; `database/apply.sh` ist für manuelle Migrationen verfügbar. Hühnerbilder werden auf höchstens 5 MB begrenzt, als JPG, PNG oder WebP geprüft und in einem privaten Azure-Blob-Container abgelegt. Ein Bild wird über die API nur ausgeliefert, wenn das zugehörige Profil veröffentlicht ist. Lokal übernimmt Azurite dieselbe Speicherung. Für den lokalen Aufruf der Functions wird daher `docker compose up -d` auch für den Blob-Emulator benötigt. Die Vorlage gestattet PostgreSQL-Zugriff vom Azure-Dienstnetz (Firewallregel `0.0.0.0`); der Datenbankzugang ist zusätzlich mit TLS und Passwort geschützt. Für produktive Anforderungen an Netzwerkisolation muss die API auf einen Host mit privatem Datenbankzugang umgestellt werden.
 
 Microsoft Entra ID ist als integrierter Identitätsanbieter von Static Web Apps verfügbar. Weise ausschließlich den zugelassenen Vereinskonten die benutzerdefinierte Static-Web-Apps-Rolle `admin` zu: Azure Portal → Static Web App → **Settings → Role Management → Invite**, Identitätsanbieter Microsoft Entra ID auswählen und `admin` als Rolle eintragen. [Microsoft-Anleitung zur Rollenverwaltung](https://learn.microsoft.com/en-us/azure/static-web-apps/authentication-custom#manage-roles). Die Admin-Oberfläche liegt unter `/admin`; die API prüft die über Static Web Apps übermittelte Rolle zusätzlich zu den geschützten Routen.
 
@@ -46,6 +46,7 @@ Erstelle eine Wix-CMS-Sammlung mit ID `Patenhuehner` (oder setze `WIX_COLLECTION
 ## API (v1)
 
 - `GET /api/v1/public/chickens` – verfügbare, freigegebene Hühnerprofile.
+- `GET /api/v1/public/images/{chickenId}` – Bild veröffentlichter Hühnerprofile.
 - `POST /api/v1/public/requests` – öffentliche Patenschafts-/Wartelistenanfrage.
 - `GET|POST /api/v1/admin/chickens` und `PUT|DELETE /api/v1/admin/chickens/{id}` – Hühnerverwaltung.
 - `GET|POST /api/v1/admin/sponsorships` und `PUT /api/v1/admin/sponsorships/{id}` – Patenschaften.

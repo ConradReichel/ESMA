@@ -1,7 +1,9 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { Pool, types } from 'pg';
+import { BlobServiceClient, ContainerClient } from '@azure/storage-blob';
 
 types.setTypeParser(1082, (value) => value);
 
@@ -17,6 +19,29 @@ const pool = new Pool({
   idleTimeoutMillis: 30_000,
 });
 let schemaReady: Promise<void> | null = null;
+let imageContainer: ContainerClient | null = null;
+const maxImageBytes = 5 * 1024 * 1024;
+
+function getImageContainer(): ContainerClient {
+  if (!imageContainer) {
+    const connectionString = process.env.BLOB_STORAGE_CONNECTION_STRING;
+    if (!connectionString) throw new Error('Bildspeicher ist nicht konfiguriert.');
+    imageContainer = BlobServiceClient.fromConnectionString(connectionString)
+      .getContainerClient(process.env.BLOB_CONTAINER || 'chicken-images');
+  }
+  return imageContainer;
+}
+
+function imageMime(bytes: Buffer): string | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
+  if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+function publicImageUrl(id: string): string {
+  return `${(process.env.PUBLIC_APP_URL || '').replace(/\/$/, '')}/api/v1/public/images/${id}`;
+}
 
 async function ensureSchema(): Promise<void> {
   if (!schemaReady) {
@@ -111,13 +136,24 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
       const denied = adminOnly(request);
       if (denied) return denied;
     }
-    const knownPath = path === '/api/v1/public/chickens' || path === '/api/v1/public/requests' ||
+    const knownPath = path === '/api/v1/public/chickens' || path === '/api/v1/public/requests' || path.startsWith('/api/v1/public/images/') ||
       path === '/api/v1/admin/chickens' || path.startsWith('/api/v1/admin/chickens/') ||
       path === '/api/v1/admin/sponsorships' || path.startsWith('/api/v1/admin/sponsorships/') ||
       path === '/api/v1/admin/requests' || path.startsWith('/api/v1/admin/requests/') ||
       path === '/api/v1/admin/wix/sync';
     if (!knownPath) return json(404, { error: 'API-Endpunkt nicht gefunden.' });
     await ensureSchema();
+    const imageId = path.startsWith('/api/v1/public/images/') ? path.slice('/api/v1/public/images/'.length) : '';
+    if (imageId && method === 'GET') {
+      if (!isUuid(imageId)) return json(404, { error: 'Bild nicht gefunden.' });
+      const chicken = await pool.query('SELECT image_url FROM chickens WHERE id=$1::uuid AND published=true', [imageId]);
+      if (!chicken.rowCount || !String(chicken.rows[0].image_url || '').endsWith(`/public/images/${imageId}`)) return json(404, { error: 'Bild nicht gefunden.' });
+      const blob = getImageContainer().getBlockBlobClient(imageId);
+      const download = await blob.downloadToBuffer();
+      const mime = imageMime(download);
+      if (!mime) return json(404, { error: 'Bild nicht gefunden.' });
+      return { status: 200, headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff', ...(process.env.CORS_ORIGIN ? { 'Access-Control-Allow-Origin': process.env.CORS_ORIGIN } : {}) }, body: download };
+    }
     if (path === '/api/v1/public/chickens' && method === 'GET') {
       if (process.env.ESMA_DEMO_MODE === 'true' && !process.env.DATABASE_URL) {
         return json(200, { items: demoChickens.filter((item) => item.status === 'available' && item.published).map(publicChicken), updatedAt: new Date().toISOString() });
@@ -155,25 +191,48 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
         const data = await bodyOf(request);
         const number = text(data.number, 20), name = text(data.name, 100);
         if (!number || !name) return json(400, { error: 'Huhnnummer und Name sind erforderlich.' });
+        const image = readImage(data);
+        if (image.error) return json(400, { error: image.error });
+        const newId = randomUUID();
+        if (image.bytes) {
+          try { await saveImage(newId, image.bytes, image.mime!); }
+          catch (error) { context.error('Chicken image upload failed', error); return json(503, { error: 'Das Bild konnte nicht gespeichert werden. Bitte prüfe den lokalen Bildspeicher.' }); }
+        }
         const result = await pool.query(
-          `INSERT INTO chickens (number,name,ring_number,breed,sex,color,hatch_year,description,image_url,status,published)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-          [number,name,text(data.ringNumber,50),text(data.breed,100),text(data.sex,40)||'Huhn',text(data.color,100),Number(data.hatchYear)||null,text(data.description,2000),text(data.imageUrl,1000),allowed(data.status,['available','reserved','sponsored','inactive'],'available'),data.published===true],
+          `INSERT INTO chickens (id,number,name,ring_number,breed,sex,color,hatch_year,description,image_url,status,published)
+           VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+          [newId,number,name,text(data.ringNumber,50),text(data.breed,100),text(data.sex,40)||'Huhn',text(data.color,100),Number(data.hatchYear)||null,text(data.description,2000),image.bytes ? publicImageUrl(newId) : '',allowed(data.status,['available','reserved','sponsored','inactive'],'available'),data.published===true],
         );
         return json(201, chickenRow(result.rows[0]));
       }
       const chickenId = idFrom(new URL(request.url), 'chickens');
       if (!chickenId) return json(404, { error: 'Huhn nicht gefunden.' });
       if (method === 'DELETE') {
-        await pool.query("UPDATE chickens SET status='inactive', published=false, updated_at=now() WHERE id=$1::uuid", [chickenId]);
+        if (!isUuid(chickenId)) return json(404, { error: 'Huhn nicht gefunden.' });
+        const current = await pool.query('SELECT image_url FROM chickens WHERE id=$1::uuid', [chickenId]);
+        if (!current.rowCount) return json(404, { error: 'Huhn nicht gefunden.' });
+        if (current.rows[0].image_url) await getImageContainer().getBlockBlobClient(chickenId).deleteIfExists();
+        await pool.query("UPDATE chickens SET status='inactive', published=false, image_url='', updated_at=now() WHERE id=$1::uuid", [chickenId]);
         return json(200, { ok: true });
       }
       if (method === 'PUT') {
         const data = await bodyOf(request);
+        if (!isUuid(chickenId)) return json(404, { error: 'Huhn nicht gefunden.' });
+        const image = readImage(data);
+        if (image.error) return json(400, { error: image.error });
+        if (image.bytes) {
+          try { await saveImage(chickenId, image.bytes, image.mime!); }
+          catch (error) { context.error('Chicken image upload failed', error); return json(503, { error: 'Das Bild konnte nicht gespeichert werden. Bitte prüfe den lokalen Bildspeicher.' }); }
+        } else if (data.clearImage === true) {
+          await getImageContainer().getBlockBlobClient(chickenId).deleteIfExists();
+        }
+        const current = await pool.query('SELECT image_url FROM chickens WHERE id=$1::uuid', [chickenId]);
+        if (!current.rowCount) return json(404, { error: 'Huhn nicht gefunden.' });
+        const imageUrl = image.bytes ? publicImageUrl(chickenId) : data.clearImage === true ? '' : current.rows[0].image_url;
         const result = await pool.query(
           `UPDATE chickens SET number=$2,name=$3,ring_number=$4,breed=$5,sex=$6,color=$7,hatch_year=$8,description=$9,image_url=$10,status=$11,published=$12,updated_at=now()
            WHERE id=$1::uuid RETURNING *`,
-          [chickenId,text(data.number,20),text(data.name,100),text(data.ringNumber,50),text(data.breed,100),text(data.sex,40)||'Huhn',text(data.color,100),Number(data.hatchYear)||null,text(data.description,2000),text(data.imageUrl,1000),allowed(data.status,['available','reserved','sponsored','inactive'],'available'),data.published===true],
+          [chickenId,text(data.number,20),text(data.name,100),text(data.ringNumber,50),text(data.breed,100),text(data.sex,40)||'Huhn',text(data.color,100),Number(data.hatchYear)||null,text(data.description,2000),imageUrl,allowed(data.status,['available','reserved','sponsored','inactive'],'available'),data.published===true],
         );
         return result.rowCount ? json(200, chickenRow(result.rows[0])) : json(404, { error: 'Huhn nicht gefunden.' });
       }
@@ -248,9 +307,24 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
 }
 
 function allowed(value: unknown, values: string[], fallback: string): string { return typeof value === 'string' && values.includes(value) ? value : fallback; }
+function readImage(data: Record<string, unknown>): { bytes?: Buffer; mime?: string; error?: string } {
+  if (data.imageData == null || data.imageData === '') return {};
+  if (typeof data.imageData !== 'string' || data.imageData.length > Math.ceil(maxImageBytes * 4 / 3) + 8) return { error: 'Bilder dürfen höchstens 5 MB groß sein.' };
+  const bytes = Buffer.from(data.imageData, 'base64');
+  if (!bytes.length || bytes.length > maxImageBytes || bytes.toString('base64') !== data.imageData) return { error: 'Das Bild ist ungültig oder größer als 5 MB.' };
+  const mime = imageMime(bytes);
+  if (!mime || data.imageMimeType !== mime) return { error: 'Bitte verwende ein gültiges JPG-, PNG- oder WebP-Bild.' };
+  return { bytes, mime };
+}
+async function saveImage(id: string, bytes: Buffer, mime: string): Promise<void> {
+  const container = getImageContainer();
+  await container.createIfNotExists();
+  await container.getBlockBlobClient(id).uploadData(bytes, { blobHTTPHeaders: { blobContentType: mime } });
+}
 function dateOrNull(value: unknown): string | null { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null; }
 function publicChicken(row: Record<string, unknown>) {
-  return { id:row.id,number:row.number,name:row.name,breed:row.breed,sex:row.sex,color:row.color,hatchYear:row.hatch_year??row.hatchYear,description:row.description,imageUrl:row.image_url??row.imageUrl };
+  const imageUrl = row.image_url ?? row.imageUrl;
+  return { id:row.id,number:row.number,name:row.name,breed:row.breed,sex:row.sex,color:row.color,hatchYear:row.hatch_year??row.hatchYear,description:row.description,imageUrl: imageUrl ? publicImageUrl(String(row.id)) : '' };
 }
 
 async function syncWix(context: InvocationContext) {
@@ -259,7 +333,7 @@ async function syncWix(context: InvocationContext) {
   const chickens=await pool.query("SELECT id,number,name,breed,sex,color,hatch_year,description,image_url,status FROM chickens WHERE published=true ORDER BY number");
   let synced=0,failed=0;
   for(const row of chickens.rows) {
-    const payload={dataCollectionId:WIX_COLLECTION_ID,dataItem:{id:String(row.id),data:{number:row.number,name:row.name,breed:row.breed,sex:row.sex,color:row.color,hatchYear:row.hatch_year,description:row.description,imageUrl:row.image_url,status:row.status,isAvailable:row.status==='available'}}};
+    const payload={dataCollectionId:WIX_COLLECTION_ID,dataItem:{id:String(row.id),data:{number:row.number,name:row.name,breed:row.breed,sex:row.sex,color:row.color,hatchYear:row.hatch_year,description:row.description,imageUrl:row.image_url ? publicImageUrl(String(row.id)) : '',status:row.status,isAvailable:row.status==='available'}}};
     try {
       const response=await fetch('https://www.wixapis.com/wix-data/v2/items/save',{method:'POST',headers:{Authorization:WIX_API_KEY,'wix-site-id':WIX_SITE_ID,'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!response.ok) throw new Error(`Wix API HTTP ${response.status}`);

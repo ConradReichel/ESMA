@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 import 'api.dart';
@@ -188,7 +192,9 @@ class _ShellState extends State<Shell> {
   Widget _chickenRow(Map<String, dynamic> chicken, {bool last = false}) {
     final status = chicken['status']?.toString() ?? 'available';
     return Container(padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 13), decoration: BoxDecoration(border: Border(bottom: BorderSide(color: last ? Colors.transparent : line))), child: Row(children: [
-      Container(width: 42, height: 42, decoration: BoxDecoration(color: const Color(0xFFF0EEE3), borderRadius: BorderRadius.circular(13)), child: Center(child: Text(chicken['sex'] == 'Hahn' ? '🐓' : '🐔', style: const TextStyle(fontSize: 23)))),
+      ClipRRect(borderRadius: BorderRadius.circular(13), child: Container(width: 42, height: 42, color: const Color(0xFFF0EEE3), child: chicken['imageUrl'] is String && (chicken['imageUrl'] as String).isNotEmpty
+        ? Image.network(chicken['imageUrl'] as String, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Center(child: Text(chicken['sex'] == 'Hahn' ? '🐓' : '🐔', style: const TextStyle(fontSize: 23))))
+        : Center(child: Text(chicken['sex'] == 'Hahn' ? '🐓' : '🐔', style: const TextStyle(fontSize: 23))))),
       const SizedBox(width: 13),
       Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('${chicken['name'] ?? 'Unbenannt'}', style: const TextStyle(fontWeight: FontWeight.w700, color: ink)), Text('#${chicken['number'] ?? '—'}  ·  ${chicken['breed'] ?? 'Rasse unbekannt'}', style: const TextStyle(fontSize: 11, color: Colors.black45))])),
       if (MediaQuery.sizeOf(context).width > 620) Expanded(child: Text('${chicken['color'] ?? '—'}', style: const TextStyle(fontSize: 12, color: Colors.black54))),
@@ -312,21 +318,75 @@ class ChickenDialog extends StatefulWidget {
 }
 
 class _ChickenDialogState extends State<ChickenDialog> {
-  late final fields = <String, TextEditingController>{for (final key in ['number', 'name', 'ringNumber', 'breed', 'sex', 'color', 'hatchYear', 'imageUrl', 'description']) key: TextEditingController(text: widget.initial[key]?.toString() ?? '')};
+  late final fields = <String, TextEditingController>{for (final key in ['number', 'name', 'ringNumber', 'breed', 'sex', 'color', 'hatchYear', 'description']) key: TextEditingController(text: widget.initial[key]?.toString() ?? '')};
   late String status = widget.initial['status']?.toString() ?? 'available';
   late bool published = widget.initial['published'] == true;
+  Uint8List? imageBytes;
+  String? imageMimeType;
+  bool clearImage = false;
+  bool picking = false;
   @override void dispose() { for (final c in fields.values) { c.dispose(); } super.dispose(); }
   Widget input(String key, String label, {int lines = 1}) => Padding(padding: const EdgeInsets.only(bottom: 12), child: TextField(controller: fields[key], maxLines: lines, decoration: InputDecoration(labelText: label)));
+  Future<void> _pickImage() async {
+    try {
+      setState(() => picking = true);
+      final file = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp']);
+      if (file == null || !mounted) return;
+      final size = file.lengthSync() ?? await file.length();
+      if (!mounted) return;
+      if (size == null) throw Exception('Die Bildgröße konnte nicht gelesen werden.');
+      if (size > 5 * 1024 * 1024) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bilder dürfen höchstens 5 MB groß sein.')));
+        return;
+      }
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      if (bytes.isEmpty) throw Exception('Die Bilddatei konnte nicht gelesen werden.');
+      final extension = file.extension?.toLowerCase();
+      final mime = switch (extension) { 'jpg' || 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp', _ => null };
+      if (mime == null) throw Exception('Bitte wähle ein JPG-, PNG- oder WebP-Bild.');
+      setState(() { imageBytes = bytes; imageMimeType = mime; clearImage = false; });
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) setState(() => picking = false);
+    }
+  }
+  Widget _imageControl() {
+    final existingUrl = widget.initial['imageUrl']?.toString() ?? '';
+    Widget preview;
+    if (imageBytes != null) {
+      preview = Image.memory(imageBytes!, width: 78, height: 70, fit: BoxFit.cover);
+    } else if (existingUrl.isNotEmpty && !clearImage) {
+      preview = Image.network(existingUrl, width: 78, height: 70, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined));
+    } else {
+      preview = const Icon(Icons.add_a_photo_outlined, color: forest, size: 26);
+    }
+    return Padding(padding: const EdgeInsets.only(bottom: 12), child: Row(children: [
+      ClipRRect(borderRadius: BorderRadius.circular(10), child: Container(width: 78, height: 70, color: const Color(0xFFF0EEE3), alignment: Alignment.center, child: preview)),
+      const SizedBox(width: 12),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(imageBytes != null ? 'Neues Bild ausgewählt' : existingUrl.isNotEmpty && !clearImage ? 'Hühnerbild' : 'Noch kein Bild', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 3), const Text('JPG, PNG oder WebP · bis 5 MB', style: TextStyle(fontSize: 11, color: Colors.black54)),
+        Wrap(spacing: 4, children: [TextButton.icon(onPressed: picking ? null : _pickImage, icon: Icon(picking ? Icons.hourglass_empty : Icons.upload_outlined, size: 16), label: Text(picking ? 'Lädt …' : 'Bild auswählen')), if ((imageBytes != null || (existingUrl.isNotEmpty && !clearImage))) TextButton(onPressed: () => setState(() { imageBytes = null; imageMimeType = null; clearImage = true; }), child: const Text('Entfernen'))]),
+      ])),
+    ]));
+  }
   @override Widget build(BuildContext context) => AlertDialog(
     title: Text(widget.initial['id'] == null ? 'Huhn anlegen' : 'Huhn bearbeiten', style: const TextStyle(color: ink)),
     content: SizedBox(width: 460, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
       Row(children: [Expanded(child: input('number', 'Huhnnummer *')), const SizedBox(width: 12), Expanded(child: input('name', 'Name *'))]),
       Row(children: [Expanded(child: input('breed', 'Rasse')), const SizedBox(width: 12), Expanded(child: input('hatchYear', 'Schlupfjahr'))]),
       Row(children: [Expanded(child: input('ringNumber', 'Ringnummer')), const SizedBox(width: 12), Expanded(child: input('color', 'Farbe'))]),
-      input('imageUrl', 'Bild-URL'), input('description', 'Kurzbeschreibung', lines: 3),
+      _imageControl(), input('description', 'Kurzbeschreibung', lines: 3),
       DropdownButtonFormField<String>(initialValue: status, decoration: const InputDecoration(labelText: 'Status'), items: const [DropdownMenuItem(value: 'available', child: Text('Verfügbar')), DropdownMenuItem(value: 'reserved', child: Text('Reserviert')), DropdownMenuItem(value: 'sponsored', child: Text('Vergeben')), DropdownMenuItem(value: 'inactive', child: Text('Inaktiv'))], onChanged: (v) => setState(() => status = v ?? 'available')),
       SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Auf der Website veröffentlichen', style: TextStyle(fontSize: 13)), value: published, onChanged: (v) => setState(() => published = v)),
     ]))),
-    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')), FilledButton(onPressed: () => Navigator.pop(context, {'number': fields['number']!.text, 'name': fields['name']!.text, 'ringNumber': fields['ringNumber']!.text, 'breed': fields['breed']!.text, 'sex': fields['sex']!.text.isEmpty ? 'Huhn' : fields['sex']!.text, 'color': fields['color']!.text, 'hatchYear': int.tryParse(fields['hatchYear']!.text), 'imageUrl': fields['imageUrl']!.text, 'description': fields['description']!.text, 'status': status, 'published': published}), child: const Text('Speichern'))],
+    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')), FilledButton(onPressed: picking ? null : () {
+      final values = <String, dynamic>{'number': fields['number']!.text, 'name': fields['name']!.text, 'ringNumber': fields['ringNumber']!.text, 'breed': fields['breed']!.text, 'sex': fields['sex']!.text.isEmpty ? 'Huhn' : fields['sex']!.text, 'color': fields['color']!.text, 'hatchYear': int.tryParse(fields['hatchYear']!.text), 'description': fields['description']!.text, 'status': status, 'published': published};
+      if (imageBytes != null) { values['imageData'] = base64Encode(imageBytes!); values['imageMimeType'] = imageMimeType; }
+      if (clearImage) values['clearImage'] = true;
+      Navigator.pop(context, values);
+    }, child: const Text('Speichern'))],
   );
 }

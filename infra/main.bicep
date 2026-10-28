@@ -9,6 +9,7 @@ param wixApiKey string = ''
 param wixSiteId string = ''
 param wixCollectionId string = 'Patenhuehner'
 param publicWebsiteOrigin string = 'https://www.kingkong-ev.de'
+param blobStorageName string = 'esma${uniqueString(resourceGroup().id)}'
 
 resource database 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   name: databaseName
@@ -53,6 +54,31 @@ resource databaseCatalog 'Microsoft.DBforPostgreSQL/flexibleServers/databases@20
   }
 }
 
+resource imageStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: blobStorageName
+  location: location
+  sku: { name: 'Standard_LRS' }
+  kind: 'StorageV2'
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource imageBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: imageStorage
+  name: 'default'
+}
+
+resource imageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: imageBlobService
+  name: 'chicken-images'
+  properties: { publicAccess: 'None' }
+}
+
 resource web 'Microsoft.Web/staticSites@2024-11-01' = {
   name: appName
   location: location
@@ -83,9 +109,13 @@ resource apiSettings 'Microsoft.Web/staticSites/config@2024-11-01' = {
     WIX_SITE_ID: wixSiteId
     WIX_COLLECTION_ID: wixCollectionId
     CORS_ORIGIN: publicWebsiteOrigin
+    BLOB_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=${imageStorage.name};AccountKey=${imageStorage.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+    BLOB_CONTAINER: 'chicken-images'
+    PUBLIC_APP_URL: 'https://${web.properties.defaultHostname}'
   }
 }
 
 output staticWebAppName string = web.name
 output staticWebAppUrl string = 'https://${web.properties.defaultHostname}'
 output postgresqlHost string = database.properties.fullyQualifiedDomainName
+output imageStorageAccount string = imageStorage.name
