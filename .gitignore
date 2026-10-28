@@ -1,0 +1,14 @@
+.DS_Store
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+app/build/
+api/node_modules/
+api/dist/
+api/schema.sql
+api/local.settings.json
+*.log
+.azure/
+infra/main.parameters.json

@@ -1,0 +1,19 @@
+{
+  "name": "esma-api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/src/index.js",
+  "scripts": {
+    "build": "cp ../database/schema.sql schema.sql && tsc -p tsconfig.json",
+    "start": "func start --port 7071"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.7.2",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.2"
+  }
+}

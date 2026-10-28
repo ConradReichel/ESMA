@@ -1,0 +1,13 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "DATABASE_URL": "postgresql://esma:esma-local-only@localhost:5432/esma",
+    "ESMA_DEMO_MODE": "true",
+    "CORS_ORIGIN": "http://localhost:4280",
+    "WIX_API_KEY": "",
+    "WIX_SITE_ID": "",
+    "WIX_COLLECTION_ID": "Patenhuehner"
+  }
+}

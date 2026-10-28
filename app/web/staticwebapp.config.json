@@ -1,0 +1,17 @@
+{
+  "routes": [
+    { "route": "/admin", "allowedRoles": ["admin"] },
+    { "route": "/admin/*", "allowedRoles": ["admin"] },
+    { "route": "/api/v1/admin/*", "allowedRoles": ["admin"] }
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/assets/*", "/*.{css,scss,js,png,gif,ico,jpg,svg,webp,json,woff,woff2,wasm}"]
+  },
+  "globalHeaders": {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()"
+  },
+  "platform": { "apiRuntime": "node:22" }
+}
