@@ -1,6 +1,6 @@
 # ESMA – Hühnerpatenmanager
 
-Flutter-Webanwendung für die interne Verwaltung von Hühnerprofilen, Patenschaften und Interessentenanfragen des King Kong e.V. Die App ist als führende Datenquelle vorgesehen; öffentlich freigegebene Hühner können über die API und per Wix-CMS-Synchronisierung veröffentlicht werden.
+Flutter-Webanwendung für die interne Verwaltung von Hühnerprofilen, Patenschaften und Interessentenanfragen. Die App ist als führende Datenquelle vorgesehen; öffentlich freigegebene Hühner können über die API und per Wix-CMS-Synchronisierung veröffentlicht werden.
 
 ## Projektstruktur
 
