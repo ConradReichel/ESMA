@@ -1,7 +1,9 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
+
+types.setTypeParser(1082, (value) => value);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || undefined,
@@ -63,6 +65,7 @@ function text(value: unknown, max = 500): string {
 }
 
 function isEmail(value: string): boolean { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value); }
+function isUuid(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 
 function isAdmin(request: HttpRequest): boolean {
   if (process.env.ESMA_DEMO_MODE === 'true' && process.env.AZURE_FUNCTIONS_ENVIRONMENT === 'Development') return true;
@@ -101,7 +104,7 @@ function chickenRow(row: Record<string, unknown>) {
 
 async function handler(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   if (request.method === 'OPTIONS') return json(204, {});
-  const path = request.url.split('?')[0].replace(/\/$/, '');
+  const path = new URL(request.url).pathname.replace(/\/$/, '');
   const method = request.method;
   try {
     if (path.startsWith('/api/v1/admin/')) {
@@ -129,6 +132,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
       if (!firstName || !lastName || !isEmail(email) || body.privacyAccepted !== true) return json(400, { error: 'Bitte fülle alle Pflichtfelder aus und bestätige den Datenschutzhinweis.' });
       const chickenId = text(body.chickenId, 36) || null;
       if (chickenId) {
+        if (!isUuid(chickenId)) return json(400, { error: 'Die Hühnerkennung ist ungültig.' });
         const chicken = await pool.query("SELECT 1 FROM chickens WHERE id=$1::uuid AND published=true AND status='available'", [chickenId]);
         if (!chicken.rowCount) return json(400, { error: 'Dieses Huhn ist derzeit nicht für eine Anfrage verfügbar.' });
       }

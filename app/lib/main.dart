@@ -1,6 +1,5 @@
-import 'dart:html' as html;
-
 import 'package:flutter/material.dart';
+import 'package:web/web.dart' as web;
 import 'api.dart';
 
 void main() => runApp(const EsmaApp());
@@ -40,6 +39,7 @@ class Shell extends StatefulWidget {
 
 class _ShellState extends State<Shell> {
   final api = EsmaApi();
+  final demoMode = const bool.fromEnvironment('ESMA_DEMO_MODE');
   String section = 'Übersicht';
   bool loading = true;
   bool signedIn = false;
@@ -50,7 +50,12 @@ class _ShellState extends State<Shell> {
   List<Map<String, dynamic>> sponsorships = [];
 
   @override
-  void initState() { super.initState(); _load(); _loadUser(); }
+  void initState() {
+    super.initState();
+    if (demoMode) { signedIn = true; userName = 'Lokaler Demo-Admin'; }
+    _load();
+    if (!demoMode) _loadUser();
+  }
 
   Future<void> _loadUser() async {
     try {
@@ -80,8 +85,8 @@ class _ShellState extends State<Shell> {
   }
 
   List<Map<String, dynamic>> _items(Map<String, dynamic> data) => (data['items'] as List? ?? []).cast<Map<String, dynamic>>();
-  void _signIn() => html.window.location.assign('/.auth/login/aad?post_login_redirect_uri=/admin');
-  void _signOut() => html.window.location.assign('/.auth/logout?post_logout_redirect_uri=/');
+  void _signIn() => web.window.location.href = '/.auth/login/aad?post_login_redirect_uri=/admin';
+  void _signOut() => web.window.location.href = '/.auth/logout?post_logout_redirect_uri=/';
 
   @override
   Widget build(BuildContext context) {
@@ -117,7 +122,7 @@ class _ShellState extends State<Shell> {
       const Spacer(),
       Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: cream, borderRadius: BorderRadius.circular(14)), child: const Row(children: [Icon(Icons.eco_outlined, color: forest, size: 19), SizedBox(width: 9), Expanded(child: Text('Mit Herz für unsere Hühner', style: TextStyle(color: ink, fontSize: 11, height: 1.3)))])),
       const SizedBox(height: 17),
-      Row(children: [CircleAvatar(radius: 16, backgroundColor: const Color(0xFFE8EEE5), child: const Icon(Icons.person_outline, size: 18, color: forest)), const SizedBox(width: 9), Expanded(child: Text(signedIn ? userName : 'Nicht angemeldet', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600))), if (signedIn) IconButton(tooltip: 'Abmelden', onPressed: _signOut, icon: const Icon(Icons.logout, size: 17))]),
+      Row(children: [const CircleAvatar(radius: 16, backgroundColor: Color(0xFFE8EEE5), child: Icon(Icons.person_outline, size: 18, color: forest)), const SizedBox(width: 9), Expanded(child: Text(signedIn ? userName : 'Nicht angemeldet', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600))), if (signedIn) IconButton(tooltip: 'Abmelden', onPressed: _signOut, icon: const Icon(Icons.logout, size: 17))]),
     ]),
   );
 
@@ -152,7 +157,7 @@ class _ShellState extends State<Shell> {
         _stat('Verfügbar', '$available', Icons.wb_sunny_outlined, const Color(0xFFF3EBD8)),
         _stat('Patenschaften', '$sponsored', Icons.favorite_border_rounded, const Color(0xFFF5E6E1)),
         _stat('Neue Anfragen', '$pending', Icons.mark_email_unread_outlined, const Color(0xFFE6ECF1)),
-      ]; }),
+      ]); }),
       const SizedBox(height: 27),
       Row(children: [const Expanded(child: Text('Hühner im Überblick', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: ink))), TextButton(onPressed: () => setState(() => section = 'Hühner'), child: const Text('Alle anzeigen  →'))]),
       const SizedBox(height: 10),
@@ -164,7 +169,7 @@ class _ShellState extends State<Shell> {
 
   Widget _hero(int count) => Container(
     padding: const EdgeInsets.fromLTRB(27, 26, 20, 24), decoration: BoxDecoration(color: const Color(0xFFE8EEE5), borderRadius: BorderRadius.circular(20)),
-    child: Row(children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.white.withOpacity(.72), borderRadius: BorderRadius.circular(20)), child: const Text('HOFLEBEN  ·  HAMBURG', style: TextStyle(color: forest, fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.1))), const SizedBox(height: 14), const Text('Guten Tag 👋', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: ink)), const SizedBox(height: 7), Text('$count Hühner freuen sich gerade über eine Patenschaft.', style: const TextStyle(fontSize: 13, color: Color(0xFF667468))), const SizedBox(height: 17), FilledButton.icon(onPressed: signedIn ? _createChicken : _signIn, icon: Icon(signedIn ? Icons.add : Icons.login, size: 17), label: Text(signedIn ? 'Huhn hinzufügen' : 'Als Admin anmelden'), style: FilledButton.styleFrom(backgroundColor: forest, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)))])), const SizedBox(width: 12), if (MediaQuery.sizeOf(context).width > 650) Container(width: 126, height: 126, decoration: BoxDecoration(color: const Color(0xFFD7E2D2), borderRadius: BorderRadius.circular(26)), child: const Center(child: Text('🐔', style: TextStyle(fontSize: 71))))]),
+    child: Row(children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.white.withValues(alpha: .72), borderRadius: BorderRadius.circular(20)), child: const Text('HOFLEBEN  ·  HAMBURG', style: TextStyle(color: forest, fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.1))), const SizedBox(height: 14), const Text('Guten Tag 👋', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: ink)), const SizedBox(height: 7), Text('$count Hühner freuen sich gerade über eine Patenschaft.', style: const TextStyle(fontSize: 13, color: Color(0xFF667468))), const SizedBox(height: 17), FilledButton.icon(onPressed: signedIn ? _createChicken : _signIn, icon: Icon(signedIn ? Icons.add : Icons.login, size: 17), label: Text(signedIn ? 'Huhn hinzufügen' : 'Als Admin anmelden'), style: FilledButton.styleFrom(backgroundColor: forest, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)))])), const SizedBox(width: 12), if (MediaQuery.sizeOf(context).width > 650) Container(width: 126, height: 126, decoration: BoxDecoration(color: const Color(0xFFD7E2D2), borderRadius: BorderRadius.circular(26)), child: const Center(child: Text('🐔', style: TextStyle(fontSize: 71))))]),
   );
 
   Widget _stat(String title, String value, IconData icon, Color tone) => Container(padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: line)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Container(width: 34, height: 34, decoration: BoxDecoration(color: tone, borderRadius: BorderRadius.circular(11)), child: Icon(icon, size: 17, color: forest)), Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: ink)), Text(title, style: const TextStyle(fontSize: 11, color: Colors.black54))]));
@@ -196,7 +201,7 @@ class _ShellState extends State<Shell> {
   Widget _statusChip(String value) {
     final label = {'available': 'Verfügbar', 'reserved': 'Reserviert', 'sponsored': 'Vergeben', 'inactive': 'Inaktiv', 'new': 'Neu', 'in_progress': 'In Bearbeitung', 'active': 'Aktiv', 'ended': 'Beendet', 'cancelled': 'Beendet', 'accepted': 'Angenommen', 'declined': 'Abgelehnt', 'converted': 'Zugeordnet'}[value] ?? value;
     final color = value == 'available' || value == 'active' ? const Color(0xFF3E7A55) : value == 'sponsored' || value == 'accepted' ? const Color(0xFF9C655A) : const Color(0xFF9A8050);
-    return Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: color.withOpacity(.1), borderRadius: BorderRadius.circular(30)), child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)));
+    return Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: color.withValues(alpha: .1), borderRadius: BorderRadius.circular(30)), child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)));
   }
 
   Widget _inquiryPage() => _pageBody(ListView(padding: const EdgeInsets.fromLTRB(34, 30, 34, 40), children: [
@@ -290,11 +295,11 @@ class _SponsorshipDialogState extends State<SponsorshipDialog> {
   @override Widget build(BuildContext context) => AlertDialog(
     title: const Text('Patenschaft erfassen', style: TextStyle(color: ink)),
     content: SizedBox(width: 440, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      DropdownButtonFormField<String>(value: chickenId, decoration: const InputDecoration(labelText: 'Huhn'), items: widget.chickens.map((c) => DropdownMenuItem(value: c['id'].toString(), child: Text('${c['name']} · #${c['number']}'))).toList(), onChanged: (v) => setState(() => chickenId = v ?? chickenId)), const SizedBox(height: 12),
+      DropdownButtonFormField<String>(initialValue: chickenId, decoration: const InputDecoration(labelText: 'Huhn'), items: widget.chickens.map((c) => DropdownMenuItem(value: c['id'].toString(), child: Text('${c['name']} · #${c['number']}'))).toList(), onChanged: (v) => setState(() => chickenId = v ?? chickenId)), const SizedBox(height: 12),
       Row(children: [Expanded(child: field(first, 'Vorname *')), const SizedBox(width: 10), Expanded(child: field(last, 'Nachname *'))]),
       field(email, 'E-Mail *', type: TextInputType.emailAddress), field(phone, 'Telefon'),
       Row(children: [Expanded(child: field(starts, 'Beginn (JJJJ-MM-TT)')), const SizedBox(width: 10), Expanded(child: field(ends, 'Ende (optional)'))]),
-      Row(children: [Expanded(child: field(amount, 'Beitrag in €', type: const TextInputType.numberWithOptions(decimal: true))), const SizedBox(width: 10), Expanded(child: DropdownButtonFormField<String>(value: frequency, decoration: const InputDecoration(labelText: 'Rhythmus'), items: const [DropdownMenuItem(value: 'Monatlich', child: Text('Monatlich')), DropdownMenuItem(value: 'Jährlich', child: Text('Jährlich')), DropdownMenuItem(value: 'Einmalig', child: Text('Einmalig'))], onChanged: (v) => setState(() => frequency = v ?? frequency)))])
+      Row(children: [Expanded(child: field(amount, 'Beitrag in €', type: const TextInputType.numberWithOptions(decimal: true))), const SizedBox(width: 10), Expanded(child: DropdownButtonFormField<String>(initialValue: frequency, decoration: const InputDecoration(labelText: 'Rhythmus'), items: const [DropdownMenuItem(value: 'Monatlich', child: Text('Monatlich')), DropdownMenuItem(value: 'Jährlich', child: Text('Jährlich')), DropdownMenuItem(value: 'Einmalig', child: Text('Einmalig'))], onChanged: (v) => setState(() => frequency = v ?? frequency)))])
     ]))),
     actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')), FilledButton(onPressed: first.text.trim().isNotEmpty && last.text.trim().isNotEmpty && email.text.contains('@') ? () => Navigator.pop(context, {'chickenId': chickenId, 'firstName': first.text.trim(), 'lastName': last.text.trim(), 'email': email.text.trim(), 'phone': phone.text.trim(), 'startsOn': starts.text.trim().isEmpty ? null : starts.text.trim(), 'endsOn': ends.text.trim().isEmpty ? null : ends.text.trim(), 'amount': double.tryParse(amount.text.replaceAll(',', '.')), 'paymentFrequency': frequency, 'status': 'active'}) : null, child: const Text('Patenschaft speichern'))],
   );
@@ -319,7 +324,7 @@ class _ChickenDialogState extends State<ChickenDialog> {
       Row(children: [Expanded(child: input('breed', 'Rasse')), const SizedBox(width: 12), Expanded(child: input('hatchYear', 'Schlupfjahr'))]),
       Row(children: [Expanded(child: input('ringNumber', 'Ringnummer')), const SizedBox(width: 12), Expanded(child: input('color', 'Farbe'))]),
       input('imageUrl', 'Bild-URL'), input('description', 'Kurzbeschreibung', lines: 3),
-      DropdownButtonFormField<String>(value: status, decoration: const InputDecoration(labelText: 'Status'), items: const [DropdownMenuItem(value: 'available', child: Text('Verfügbar')), DropdownMenuItem(value: 'reserved', child: Text('Reserviert')), DropdownMenuItem(value: 'sponsored', child: Text('Vergeben')), DropdownMenuItem(value: 'inactive', child: Text('Inaktiv'))], onChanged: (v) => setState(() => status = v ?? 'available')),
+      DropdownButtonFormField<String>(initialValue: status, decoration: const InputDecoration(labelText: 'Status'), items: const [DropdownMenuItem(value: 'available', child: Text('Verfügbar')), DropdownMenuItem(value: 'reserved', child: Text('Reserviert')), DropdownMenuItem(value: 'sponsored', child: Text('Vergeben')), DropdownMenuItem(value: 'inactive', child: Text('Inaktiv'))], onChanged: (v) => setState(() => status = v ?? 'available')),
       SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Auf der Website veröffentlichen', style: TextStyle(fontSize: 13)), value: published, onChanged: (v) => setState(() => published = v)),
     ]))),
     actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')), FilledButton(onPressed: () => Navigator.pop(context, {'number': fields['number']!.text, 'name': fields['name']!.text, 'ringNumber': fields['ringNumber']!.text, 'breed': fields['breed']!.text, 'sex': fields['sex']!.text.isEmpty ? 'Huhn' : fields['sex']!.text, 'color': fields['color']!.text, 'hatchYear': int.tryParse(fields['hatchYear']!.text), 'imageUrl': fields['imageUrl']!.text, 'description': fields['description']!.text, 'status': status, 'published': published}), child: const Text('Speichern'))],

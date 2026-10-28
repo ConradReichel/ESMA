@@ -7,17 +7,17 @@ Flutter-Webanwendung für die interne Verwaltung von Hühnerprofilen, Patenschaf
 - `app/`: Flutter Web UI
 - `api/`: Azure Functions v4 API in TypeScript
 - `database/`: PostgreSQL-Schema
-- `staticwebapp.config.json`: Entra ID Anmeldung und Admin-Routen
+- `app/web/staticwebapp.config.json`: Entra ID-Routen und Admin-Schutz
 - `infra/`: Azure Developer CLI Bereitstellung
 
 ## Lokal starten
 
-Voraussetzungen: Flutter mit Web-Unterstützung, Node.js 22, Azure Functions Core Tools v4 und Docker Compose.
+Voraussetzungen: Flutter mit Web-Unterstützung, Node.js 22, Azure Functions Core Tools v4 und Docker Compose. Auf Apple Silicon kann Docker Desktop durch Colima ersetzt werden (`brew install colima docker docker-compose`, danach `colima start`). Bei Homebrew `node@22` ergänze die Node-Werkzeuge mit `export PATH="/opt/homebrew/opt/node@22/bin:$PATH"` zum `PATH`.
 
-1. Lokale Function-Speicheremulation und PostgreSQL starten: `docker compose up -d`.
-2. API einrichten: `cd api && cp local.settings.example.json local.settings.json && npm install && npm run build && npm start`.
-3. Flutter starten: in einem zweiten Terminal `cd app && flutter pub get && flutter run -d chrome --web-port=4280 --dart-define=ESMA_API_URL=http://localhost:7071`.
-4. Der lokale Function-Host läuft im Development-Modus; `ESMA_DEMO_MODE=true` erlaubt nur lokal die Admin-Oberfläche ohne Entra-Anmeldung. Diese Einstellung darf nicht in Azure gesetzt werden.
+1. PostgreSQL und lokale Functions-Speicheremulation starten: `docker compose up -d`.
+2. In Terminal 1 API einrichten und starten: `cd api`, einmalig `cp local.settings.example.json local.settings.json`, dann `npm install && npm run build && npm start`.
+3. In Terminal 2 Flutter starten: `cd app && flutter pub get && flutter run -d web-server --web-port=4280 --dart-define=ESMA_API_URL=http://localhost:7071 --dart-define=ESMA_DEMO_MODE=true`.
+4. Öffne `http://localhost:4280`. Im lokalen Demo-Modus bist du als lokaler Admin angemeldet; diese Einstellung darf nicht in Azure gesetzt werden.
 
 ## Azure bereitstellen
 
