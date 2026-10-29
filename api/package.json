@@ -4,12 +4,17 @@
   "private": true,
   "main": "dist/src/index.js",
   "scripts": {
-    "build": "cp ../database/schema.sql schema.sql && tsc -p tsconfig.json",
-    "start": "func start --port 7071"
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "migrate": "node dist/src/migrate.js",
+    "test": "npm run build && node --test dist/src/storage.test.js",
+    "migrate-images": "node dist/src/migrate-images.js"
   },
   "dependencies": {
-    "@azure/functions": "^4.7.2",
+    "@aws-sdk/client-s3": "^3.800.0",
     "@azure/storage-blob": "12.29.1",
+    "fastify": "^5.2.1",
+    "jose": "^6.0.10",
     "pg": "^8.13.1"
   },
   "devDependencies": {

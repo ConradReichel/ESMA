@@ -1,9 +1,8 @@
-import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import Fastify from 'fastify';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { randomUUID } from 'node:crypto';
 import { Pool, types } from 'pg';
-import { BlobServiceClient, ContainerClient } from '@azure/storage-blob';
+import { createStorage } from './storage';
 
 types.setTypeParser(1082, (value) => value);
 
@@ -14,23 +13,16 @@ const pool = new Pool({
   user: process.env.PGUSER || undefined,
   password: process.env.PGPASSWORD || undefined,
   database: process.env.PGDATABASE || undefined,
-  ssl: process.env.DATABASE_URL?.includes('localhost') || process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
+  ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: process.env.PGSSL_REJECT_UNAUTHORIZED !== 'false' },
   max: 8,
   idleTimeoutMillis: 30_000,
 });
-let schemaReady: Promise<void> | null = null;
-let imageContainer: ContainerClient | null = null;
 const maxImageBytes = 5 * 1024 * 1024;
+const storage = createStorage();
 
-function getImageContainer(): ContainerClient {
-  if (!imageContainer) {
-    const connectionString = process.env.BLOB_STORAGE_CONNECTION_STRING;
-    if (!connectionString) throw new Error('Bildspeicher ist nicht konfiguriert.');
-    imageContainer = BlobServiceClient.fromConnectionString(connectionString)
-      .getContainerClient(process.env.BLOB_CONTAINER || 'chicken-images');
-  }
-  return imageContainer;
-}
+type HttpRequest = { method: string; url: string; headers: { get(name: string): string | null }; json(): Promise<unknown> };
+type HttpResponseInit = { status?: number; headers?: Record<string, string>; jsonBody?: unknown; body?: Buffer | string };
+type InvocationContext = { error(message: string, error?: unknown): void; warn(message: string, error?: unknown): void };
 
 function imageMime(bytes: Buffer): string | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
@@ -43,26 +35,11 @@ function publicImageUrl(id: string): string {
   return `${(process.env.PUBLIC_APP_URL || '').replace(/\/$/, '')}/api/v1/public/images/${id}`;
 }
 
-async function ensureSchema(): Promise<void> {
-  if (!schemaReady) {
-    schemaReady = readFile(join(__dirname, '../../schema.sql'), 'utf8')
-      .then((schema) => pool.query(schema).then(() => undefined))
-      .catch((error) => { schemaReady = null; throw error; });
-  }
-  await schemaReady;
-}
-
-const demoChickens = [
-  { id: 'demo-1', number: '0005', name: 'Thea', ringNumber: '', breed: 'Plymouth Rock', sex: 'Huhn', color: 'gesperbert grau', hatchYear: 2024, description: 'Neugierig und gerne mitten im Geschehen.', imageUrl: '', status: 'available', published: true },
-  { id: 'demo-2', number: '0006', name: 'Lotte', ringNumber: '', breed: 'Sussex', sex: 'Huhn', color: 'weiß', hatchYear: 2023, description: 'Eine ruhige, freundliche Henne.', imageUrl: '', status: 'available', published: true },
-  { id: 'demo-3', number: '0007', name: 'Martha', ringNumber: '', breed: 'Marans', sex: 'Huhn', color: 'dunkelbraun', hatchYear: 2024, description: 'Liebt sonnige Plätze und frisches Grün.', imageUrl: '', status: 'sponsored', published: true },
-];
-
 const corsHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
   'Cache-Control': 'no-store',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type,Authorization',
   ...(process.env.CORS_ORIGIN ? { 'Access-Control-Allow-Origin': process.env.CORS_ORIGIN } : {}),
 };
 
@@ -92,20 +69,28 @@ function text(value: unknown, max = 500): string {
 function isEmail(value: string): boolean { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value); }
 function isUuid(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 
-function isAdmin(request: HttpRequest): boolean {
-  if (process.env.ESMA_DEMO_MODE === 'true' && process.env.AZURE_FUNCTIONS_ENVIRONMENT === 'Development') return true;
-  const encoded = request.headers.get('x-ms-client-principal');
-  if (!encoded) return false;
+let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+async function isAdmin(request: HttpRequest): Promise<boolean> {
+  const authorization = request.headers.get('authorization') || '';
+  if (!authorization.startsWith('Bearer ')) return false;
+  const issuer = process.env.OIDC_ISSUER;
+  const jwksUrl = process.env.OIDC_JWKS_URL;
+  if (!issuer || !jwksUrl) return false;
   try {
-    const principal = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as { userRoles?: string[] };
-    return Array.isArray(principal.userRoles) && principal.userRoles.includes('admin');
-  } catch {
-    return false;
-  }
+    jwks ??= createRemoteJWKSet(new URL(jwksUrl));
+    const { payload } = await jwtVerify(authorization.slice(7), jwks, {
+      issuer,
+      audience: process.env.OIDC_AUDIENCE || 'esma-api',
+      algorithms: ['RS256'],
+    });
+    const realmRoles = (payload.realm_access as { roles?: unknown } | undefined)?.roles;
+    const clientRoles = (payload.resource_access as Record<string, { roles?: unknown }> | undefined)?.['esma-api']?.roles;
+    return (Array.isArray(realmRoles) && realmRoles.includes('admin')) || (Array.isArray(clientRoles) && clientRoles.includes('admin'));
+  } catch { return false; }
 }
 
-function adminOnly(request: HttpRequest): HttpResponseInit | null {
-  return isAdmin(request) ? null : json(401, { error: 'Für diesen Bereich ist eine Admin-Anmeldung erforderlich.' });
+async function adminOnly(request: HttpRequest): Promise<HttpResponseInit | null> {
+  return await isAdmin(request) ? null : json(401, { error: 'Für diesen Bereich ist eine Admin-Anmeldung erforderlich.' });
 }
 
 function chickenRow(row: Record<string, unknown>) {
@@ -133,7 +118,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
   const method = request.method;
   try {
     if (path.startsWith('/api/v1/admin/')) {
-      const denied = adminOnly(request);
+      const denied = await adminOnly(request);
       if (denied) return denied;
     }
     const knownPath = path === '/api/v1/public/chickens' || path === '/api/v1/public/requests' || path.startsWith('/api/v1/public/images/') ||
@@ -142,22 +127,18 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
       path === '/api/v1/admin/requests' || path.startsWith('/api/v1/admin/requests/') ||
       path === '/api/v1/admin/wix/sync';
     if (!knownPath) return json(404, { error: 'API-Endpunkt nicht gefunden.' });
-    await ensureSchema();
     const imageId = path.startsWith('/api/v1/public/images/') ? path.slice('/api/v1/public/images/'.length) : '';
     if (imageId && method === 'GET') {
       if (!isUuid(imageId)) return json(404, { error: 'Bild nicht gefunden.' });
       const chicken = await pool.query('SELECT image_url FROM chickens WHERE id=$1::uuid AND published=true', [imageId]);
       if (!chicken.rowCount || !String(chicken.rows[0].image_url || '').endsWith(`/public/images/${imageId}`)) return json(404, { error: 'Bild nicht gefunden.' });
-      const blob = getImageContainer().getBlockBlobClient(imageId);
-      const download = await blob.downloadToBuffer();
+      const download = await storage.get(imageId);
+      if (!download) return json(404, { error: 'Bild nicht gefunden.' });
       const mime = imageMime(download);
       if (!mime) return json(404, { error: 'Bild nicht gefunden.' });
       return { status: 200, headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff', ...(process.env.CORS_ORIGIN ? { 'Access-Control-Allow-Origin': process.env.CORS_ORIGIN } : {}) }, body: download };
     }
     if (path === '/api/v1/public/chickens' && method === 'GET') {
-      if (process.env.ESMA_DEMO_MODE === 'true' && !process.env.DATABASE_URL) {
-        return json(200, { items: demoChickens.filter((item) => item.status === 'available' && item.published).map(publicChicken), updatedAt: new Date().toISOString() });
-      }
       const result = await pool.query("SELECT id, number, name, breed, sex, color, hatch_year, description, image_url, status FROM chickens WHERE published = true AND status = 'available' ORDER BY number");
       return json(200, { items: result.rows.map(publicChicken), updatedAt: new Date().toISOString() });
     }
@@ -181,8 +162,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
     }
 
     if (path === '/api/v1/admin/chickens' || path.startsWith('/api/v1/admin/chickens/')) {
-      const denied = adminOnly(request); if (denied) return denied;
-      if (process.env.ESMA_DEMO_MODE === 'true' && !process.env.DATABASE_URL) return json(503, { error: 'Demo-Modus: Änderungen sind nicht dauerhaft gespeichert.' });
+      const denied = await adminOnly(request); if (denied) return denied;
       if (path === '/api/v1/admin/chickens' && method === 'GET') {
         const result = await pool.query('SELECT * FROM chickens ORDER BY number');
         return json(200, { items: result.rows.map(chickenRow) });
@@ -195,7 +175,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
         if (image.error) return json(400, { error: image.error });
         const newId = randomUUID();
         if (image.bytes) {
-          try { await saveImage(newId, image.bytes, image.mime!); }
+          try { await storage.put(newId, image.bytes, image.mime!); }
           catch (error) { context.error('Chicken image upload failed', error); return json(503, { error: 'Das Bild konnte nicht gespeichert werden. Bitte prüfe den lokalen Bildspeicher.' }); }
         }
         const result = await pool.query(
@@ -211,7 +191,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
         if (!isUuid(chickenId)) return json(404, { error: 'Huhn nicht gefunden.' });
         const current = await pool.query('SELECT image_url FROM chickens WHERE id=$1::uuid', [chickenId]);
         if (!current.rowCount) return json(404, { error: 'Huhn nicht gefunden.' });
-        if (current.rows[0].image_url) await getImageContainer().getBlockBlobClient(chickenId).deleteIfExists();
+        if (current.rows[0].image_url) await storage.delete(chickenId);
         await pool.query("UPDATE chickens SET status='inactive', published=false, image_url='', updated_at=now() WHERE id=$1::uuid", [chickenId]);
         return json(200, { ok: true });
       }
@@ -221,10 +201,10 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
         const image = readImage(data);
         if (image.error) return json(400, { error: image.error });
         if (image.bytes) {
-          try { await saveImage(chickenId, image.bytes, image.mime!); }
+          try { await storage.put(chickenId, image.bytes, image.mime!); }
           catch (error) { context.error('Chicken image upload failed', error); return json(503, { error: 'Das Bild konnte nicht gespeichert werden. Bitte prüfe den lokalen Bildspeicher.' }); }
         } else if (data.clearImage === true) {
-          await getImageContainer().getBlockBlobClient(chickenId).deleteIfExists();
+          await storage.delete(chickenId);
         }
         const current = await pool.query('SELECT image_url FROM chickens WHERE id=$1::uuid', [chickenId]);
         if (!current.rowCount) return json(404, { error: 'Huhn nicht gefunden.' });
@@ -239,8 +219,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
     }
 
     if (path === '/api/v1/admin/sponsorships' || path.startsWith('/api/v1/admin/sponsorships/')) {
-      const denied = adminOnly(request); if (denied) return denied;
-      if (process.env.ESMA_DEMO_MODE === 'true' && !process.env.DATABASE_URL) return json(503, { error: 'Demo-Modus: Änderungen sind nicht dauerhaft gespeichert.' });
+      const denied = await adminOnly(request); if (denied) return denied;
       if (path.endsWith('/sponsorships') && method === 'GET') {
         const result = await pool.query(`SELECT s.*, c.first_name,c.last_name,c.email,c.phone,h.name AS chicken_name,h.number AS chicken_number
           FROM sponsorships s JOIN contacts c ON c.id=s.contact_id JOIN chickens h ON h.id=s.chicken_id ORDER BY s.created_at DESC`);
@@ -280,7 +259,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
     }
 
     if (path === '/api/v1/admin/requests' || path.startsWith('/api/v1/admin/requests/')) {
-      const denied = adminOnly(request); if (denied) return denied;
+      const denied = await adminOnly(request); if (denied) return denied;
       if (path.endsWith('/requests') && method === 'GET') {
         const result=await pool.query(`SELECT i.*,h.name AS chicken_name,h.number AS chicken_number FROM inquiries i LEFT JOIN chickens h ON h.id=i.chicken_id ORDER BY i.created_at DESC`);
         return json(200,{items:result.rows});
@@ -294,7 +273,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
     }
 
     if(path==='/api/v1/admin/wix/sync'&&method==='POST') {
-      const denied=adminOnly(request); if(denied)return denied;
+      const denied=await adminOnly(request); if(denied)return denied;
       const result=await syncWix(context);
       return json(result.failed?502:200,result);
     }
@@ -315,11 +294,6 @@ function readImage(data: Record<string, unknown>): { bytes?: Buffer; mime?: stri
   const mime = imageMime(bytes);
   if (!mime || data.imageMimeType !== mime) return { error: 'Bitte verwende ein gültiges JPG-, PNG- oder WebP-Bild.' };
   return { bytes, mime };
-}
-async function saveImage(id: string, bytes: Buffer, mime: string): Promise<void> {
-  const container = getImageContainer();
-  await container.createIfNotExists();
-  await container.getBlockBlobClient(id).uploadData(bytes, { blobHTTPHeaders: { blobContentType: mime } });
 }
 function dateOrNull(value: unknown): string | null { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null; }
 function publicChicken(row: Record<string, unknown>) {
@@ -355,4 +329,26 @@ async function syncWix(context: InvocationContext) {
   return { synced,failed,updatedAt:new Date().toISOString() };
 }
 
-app.http('api', { route: '{*path}', methods: ['GET','POST','PUT','DELETE','OPTIONS'], authLevel: 'anonymous', handler });
+const api = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
+api.route({
+  url: '/*', method: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  handler: async (request, reply) => {
+    const context: InvocationContext = { error: (message, error) => request.log.error({ err: error }, message), warn: (message, error) => request.log.warn({ err: error }, message) };
+    const adapted: HttpRequest = {
+      method: request.method,
+      url: `http://localhost${request.url}`,
+      headers: { get: (name) => request.headers[name.toLowerCase()]?.toString() ?? null },
+      json: async () => request.body,
+    };
+    const response = await handler(adapted, context);
+    reply.code(response.status ?? 200);
+    if (response.headers) reply.headers(response.headers);
+    if (response.body) return reply.send(response.body);
+    if (response.jsonBody !== undefined) return reply.send(response.jsonBody);
+    return reply.send();
+  },
+});
+api.get('/healthz', async () => ({ status: 'ok' }));
+const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || '0.0.0.0';
+api.listen({ port, host }).catch((error) => { api.log.error(error); process.exit(1); });

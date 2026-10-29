@@ -1,60 +1,97 @@
 # ESMA – Hühnerpatenmanager
 
-Flutter-Webanwendung für die interne Verwaltung von Hühnerprofilen, Patenschaften und Interessentenanfragen. Die App ist als führende Datenquelle vorgesehen; öffentlich freigegebene Hühner können über die API und per Wix-CMS-Synchronisierung veröffentlicht werden.
+Flutter-Webanwendung zur Verwaltung von Hühnerprofilen, Patenschaften und Interessentenanfragen. Das Projekt verwendet OCI-Container, PostgreSQL und OIDC. Es kann auf einem Linux-Server bei Hetzner, IONOS oder einem anderen Docker-Compose-Host betrieben werden.
 
-## Projektstruktur
+## Komponenten
 
-- `app/`: Flutter Web UI
-- `api/`: Azure Functions v4 API in TypeScript
-- `database/`: PostgreSQL-Schema
-- `app/web/staticwebapp.config.json`: Entra ID-Routen und Admin-Schutz
-- `infra/`: Azure Developer CLI Bereitstellung
+- `app/`: Flutter-Weboberfläche mit Keycloak JavaScript Adapter
+- `api/`: Fastify-API auf Node.js 22
+- `database/`: PostgreSQL-Schema und Backup-Werkzeuge
+- `keycloak/`: Realm-Voreinstellung für interne Benutzer und OIDC
+- `docker-compose.yml`: PostgreSQL, Keycloak, Migration, API, Web und Caddy
+- `api/src/storage.ts`: austauschbare Bildspeicher-Adapter
 
-## Lokal starten
+## Betrieb auf einem Server
 
-Voraussetzungen: Flutter mit Web-Unterstützung, Node.js 22, Azure Functions Core Tools v4 und Docker Compose. Auf Apple Silicon kann Docker Desktop durch Colima ersetzt werden (`brew install colima docker docker-compose`, danach `colima start`). Bei Homebrew `node@22` ergänze die Node-Werkzeuge mit `export PATH="/opt/homebrew/opt/node@22/bin:$PATH"` zum `PATH`.
+Voraussetzungen: Docker Engine und Docker Compose v2. Weise die DNS-Namen für App und Anmeldung auf die öffentliche IP des Servers und erlaube eingehend TCP 80/443.
 
-1. PostgreSQL und lokale Functions-Speicheremulation starten: `docker compose up -d`.
-2. In Terminal 1 API einrichten und starten: `cd api`, einmalig `cp local.settings.example.json local.settings.json`, dann `npm install && npm run build && npm start`.
-3. In Terminal 2 Flutter starten: `cd app && flutter pub get && flutter run -d web-server --web-port=4280 --dart-define=ESMA_API_URL=http://localhost:7071 --dart-define=ESMA_DEMO_MODE=true`.
-4. Öffne `http://localhost:4280`. Im lokalen Demo-Modus bist du als lokaler Admin angemeldet; diese Einstellung darf nicht in Azure gesetzt werden.
-
-## Azure bereitstellen
-
-Die Bicep-Vorlage in `infra/main.bicep` stellt eine Azure Static Web App Standard und Azure Database for PostgreSQL Flexible Server bereit. Die HTTP-API läuft als integrierte, verwaltete Azure-Functions-API der Static Web App. Damit übernimmt Static Web Apps Anmeldung, Rollenprüfung und `/api`-Routing; eine separate Function-App muss nicht betrieben werden. Die Wix-Synchronisierung wird im Adminbereich manuell ausgelöst.
-
-Kopiere `infra/main.parameters.example.json` nach `infra/main.parameters.json`, setze ein starkes Datenbankpasswort und ergänze bei Bedarf Wix-Zugangsdaten (die echte Parameterdatei ist in `.gitignore`). Infrastruktur bereitstellen: `az deployment group create --resource-group <resource-group> --template-file infra/main.bicep --parameters @infra/main.parameters.json`. Lege für die GitHub Actions das Static-Web-Apps-Deploymenttoken als Repository-Secret `AZURE_STATIC_WEB_APPS_API_TOKEN` an. Der Workflow baut Flutter und Functions und veröffentlicht beides.
-
-Die API wendet `database/schema.sql` beim ersten Function-Aufruf idempotent an; `database/apply.sh` ist für manuelle Migrationen verfügbar. Hühnerbilder werden auf höchstens 5 MB begrenzt, als JPG, PNG oder WebP geprüft und in einem privaten Azure-Blob-Container abgelegt. Ein Bild wird über die API nur ausgeliefert, wenn das zugehörige Profil veröffentlicht ist. Lokal übernimmt Azurite dieselbe Speicherung. Für den lokalen Aufruf der Functions wird daher `docker compose up -d` auch für den Blob-Emulator benötigt. Die Vorlage gestattet PostgreSQL-Zugriff vom Azure-Dienstnetz (Firewallregel `0.0.0.0`); der Datenbankzugang ist zusätzlich mit TLS und Passwort geschützt. Für produktive Anforderungen an Netzwerkisolation muss die API auf einen Host mit privatem Datenbankzugang umgestellt werden.
-
-Microsoft Entra ID ist als integrierter Identitätsanbieter von Static Web Apps verfügbar. Weise ausschließlich den zugelassenen Vereinskonten die benutzerdefinierte Static-Web-Apps-Rolle `admin` zu: Azure Portal → Static Web App → **Settings → Role Management → Invite**, Identitätsanbieter Microsoft Entra ID auswählen und `admin` als Rolle eintragen. [Microsoft-Anleitung zur Rollenverwaltung](https://learn.microsoft.com/en-us/azure/static-web-apps/authentication-custom#manage-roles). Die Admin-Oberfläche liegt unter `/admin`; die API prüft die über Static Web Apps übermittelte Rolle zusätzlich zu den geschützten Routen.
-
-### PostgreSQL
-
-Lokale Verbindung:
-
-```text
-postgresql://esma:esma-local-only@localhost:5432/esma
+```sh
+cp .env.example .env
 ```
 
-Docker lädt `database/schema.sql` beim Erstellen des lokalen Datenbank-Volumes. Azure-Schemata werden beim ersten API-Aufruf angewendet; `database/apply.sh` kann ein Schema manuell neu anwenden. Für Azure verwendet der PostgreSQL-Client TLS.
+Setze in `.env` `APP_DOMAIN`, `AUTH_DOMAIN` sowie zwei starke, getrennte Passwörter für PostgreSQL und den Keycloak-Administrationszugang. Wähle den gewünschten Speicher mit `STORAGE_DRIVER` (siehe unten). Starte anschließend:
 
-### Wix CMS
+```sh
+docker compose up -d --build
+```
 
-Erstelle eine Wix-CMS-Sammlung mit ID `Patenhuehner` (oder setze `WIX_COLLECTION_ID`) und stelle die dafür nötigen Wix API-Berechtigungen bereit. Die Synchronisierung überträgt nur veröffentlichte Profile mit Name, Nummer, Rasse, Geschlecht, Farbe, Schlupfjahr, Beschreibung, Bild-URL und Verfügbarkeitsstatus. Die stabile Hühner-ID dient als Wix Item-ID, damit wiederholte Synchronisierung Einträge aktualisiert statt zu duplizieren. Filtere die Wix-Website auf `isAvailable = true`; nicht mehr veröffentlichte Profile werden bei der nächsten Synchronisierung aus der Wix-Sammlung entfernt. Wix-Speicherfehler sind im API-Log sichtbar. Der Wix-API-Schlüssel wird als Function-App-Einstellung der Static Web App gespeichert. Für direkte Browserabfragen der öffentlichen API ist `CORS_ORIGIN` auf die Vereinswebsite beschränkt; passe `publicWebsiteOrigin` in der Parameterdatei an, falls Wix eine andere veröffentlichte Domain verwendet.
+Caddy stellt für öffentliche Domains automatisch HTTPS bereit. Öffne `https://AUTH_DOMAIN`, melde dich mit dem Keycloak-Bootstrap-Konto an und passe unter **Clients → esma-web** `Valid redirect URIs` und `Web origins` an die Domain aus `APP_DOMAIN` an. Die Realm-Voreinstellung enthält Beispielwerte für `app.example.org` und `localhost`.
 
-## API (v1)
+Wenn eine externe Website (zum Beispiel Wix) die öffentliche API direkt im Browser aufruft, setze `CORS_ORIGIN` auf genau deren HTTPS-Origin. Bei der üblichen Bereitstellung über dieselbe App-Domain ist kein zusätzlicher CORS-Origin nötig.
 
-- `GET /api/v1/public/chickens` – verfügbare, freigegebene Hühnerprofile.
-- `GET /api/v1/public/images/{chickenId}` – Bild veröffentlichter Hühnerprofile.
-- `POST /api/v1/public/requests` – öffentliche Patenschafts-/Wartelistenanfrage.
-- `GET|POST /api/v1/admin/chickens` und `PUT|DELETE /api/v1/admin/chickens/{id}` – Hühnerverwaltung.
-- `GET|POST /api/v1/admin/sponsorships` und `PUT /api/v1/admin/sponsorships/{id}` – Patenschaften.
-- `GET /api/v1/admin/requests` und `PUT /api/v1/admin/requests/{id}` – Anfrageverwaltung.
-- `POST /api/v1/admin/wix/sync` – veröffentlichte Profile mit Wix abgleichen.
+Lege in Keycloak interne Benutzer an und weise ihnen die Realm-Rolle `admin` zu. Der Keycloak-Administrationszugang dient nur der Einrichtung und sollte nicht für den täglichen Zugriff verwendet werden. Externe OIDC-Anbieter können unter **Identity providers** ergänzt werden. Weise externen Benutzern die ESMA-Rolle nur über einen passenden, kontrollierten Mapper zu.
 
-Kontaktdaten werden ausschließlich intern gespeichert und nie in der öffentlichen API-Antwort oder Wix-Payload ausgegeben. Stripe und EasyVerein sind noch nicht integriert; externe Kontakt-IDs sind im Datenmodell vorgesehen.
+Compose führt das idempotente PostgreSQL-Schema als Migrationsschritt aus, bevor die API startet. Für spätere Schemaänderungen Schema aktualisieren und den Migrationsdienst erneut starten:
 
-## Fachliche Hinweise
+```sh
+docker compose run --rm migrate
+```
 
-Beiträge und Vertragsbedingungen werden nicht fest vorgegeben. Eine Patenschaft speichert den individuell vereinbarten Betrag, Zahlungsrhythmus, Beginn, Ende und Status, ohne Zahlungen auszulösen. Die Anwendung erfindet keine Vereinsregeln und ersetzt keine Vertrags- oder Spendenabwicklung.
+## Bildspeicher auswählen
+
+Setze `STORAGE_DRIVER` in `.env` auf einen der folgenden Werte:
+
+| Treiber | Konfiguration | Einsatz |
+| --- | --- | --- |
+| `local` | `LOCAL_STORAGE_PATH` (im Container `/data/images`) | Einzelserver mit persistentem Compose-Volume |
+| `s3` | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`; optional `S3_FORCE_PATH_STYLE` | S3-kompatible Dienste wie Hetzner, IONOS, MinIO oder andere Anbieter |
+| `azure-blob` | `AZURE_STORAGE_CONNECTION_STRING`, optional `AZURE_STORAGE_CONTAINER` | Bestehende Azure-Bildspeicher |
+
+Die API speichert nur UUID-basierte Objektschlüssel, hält Speicherbereiche privat und liefert Bilder über `/api/v1/public/images/{chickenId}` aus. `s3` verwendet die AWS S3 API; Anbieter-spezifische Endpunkte und Zugangsdaten stehen ausschließlich in `.env`. Der S3-Treiber legt den Bucket nicht an: Er muss vorher beim Anbieter angelegt werden. Fehlen für den ausgewählten Treiber Zugangsdaten, beendet sich die API mit einer verständlichen Fehlermeldung.
+
+Der lokale Treiber verwendet das persistente Docker-Volume `image_data`. Bei S3- oder Azure-Nutzung müssen Bilder über die jeweilige Storage-Sicherung gesichert werden. Ein Treiberwechsel kopiert keine Bestandsbilder automatisch.
+
+## Datenmigration aus Azure
+
+Vor der Umstellung erstelle einen PostgreSQL-Dump der App-Datenbank und stelle ihn im neuen PostgreSQL wieder her. Das Keycloak-System startet neu mit eigener Benutzerverwaltung; Azure-Entra-Benutzer müssen intern angelegt oder als externer OIDC-Anbieter angebunden und Rollen zugewiesen werden.
+
+Für vorhandene Hühnerbilder stellt die API einen Kopierlauf von Azure Blob Storage in den konfigurierten Zieltreiber bereit. Wähle in `.env` das Ziel (`local` oder `s3`) und setze dort dessen Zugangsdaten. Führe dann den Befehl im API-Container aus:
+
+```sh
+docker compose exec \
+  -e SOURCE_AZURE_STORAGE_CONNECTION_STRING='…' \
+  -e SOURCE_AZURE_STORAGE_CONTAINER='chicken-images' \
+  api npm run migrate-images
+```
+
+Der Kopierlauf bricht bei einem fehlenden Quellbild ab und verändert die Azure-Quelle nicht. Wiederholungen überschreiben dieselben UUID-Schlüssel sicher. Erst nach Prüfung der Bilder sollte der alte Azure-Speicher abgeschaltet werden.
+
+## Backups
+
+`database/backup.sh [Zielverzeichnis]` sichert beide PostgreSQL-Datenbanken: ESMA und Keycloak. Bei `STORAGE_DRIVER=local` wird zusätzlich das Bild-Volume archiviert. Speichere Backups außerhalb des Servers und richte regelmäßige Aufbewahrung/Rotation ein. Für S3 und Azure sind zusätzlich die Backup- oder Versionierungsfunktionen des jeweiligen Speicheranbieters zu konfigurieren.
+
+Wiederherstellung erfolgt in eine gestoppte bzw. leere Installation mit `pg_restore` für beide Datenbanken; bei lokalem Bildspeicher das Archiv in das Volume `image_data` zurückspielen. Vor einer produktiven Wiederherstellung die Zielinstallation und Backups sichern.
+
+## Entwicklung
+
+Voraussetzungen: Flutter, Node.js 22 und Docker Compose. Kopiere `.env.example` nach `.env`, setze lokale Passwörter und nutze `APP_DOMAIN=localhost`, `AUTH_DOMAIN=auth.localhost`. Caddy verwendet für lokale Domains seine interne Zertifizierungsstelle; der Browser muss dem lokalen Zertifikat vertrauen.
+
+```sh
+npm --prefix web-auth install
+npm --prefix web-auth run build
+docker compose up -d --build
+```
+
+Öffne `https://localhost`. Für den öffentlichen Bereich sind keine Demo-Zugangsdaten eingebaut. Admin-Funktionen benötigen ein Keycloak-Konto mit Realm-Rolle `admin`.
+
+## API
+
+- `GET /api/v1/public/chickens` – verfügbare, freigegebene Profile
+- `GET /api/v1/public/images/{chickenId}` – Bilder veröffentlichter Hühner
+- `POST /api/v1/public/requests` – öffentliche Patenschafts-/Wartelistenanfrage
+- `GET|POST /api/v1/admin/chickens` und `PUT|DELETE /api/v1/admin/chickens/{id}` – Hühnerverwaltung
+- `GET|POST /api/v1/admin/sponsorships` und `PUT /api/v1/admin/sponsorships/{id}` – Patenschaften
+- `GET /api/v1/admin/requests` und `PUT /api/v1/admin/requests/{id}` – Anfragen
+- `POST /api/v1/admin/wix/sync` – veröffentlichte Profile mit Wix abgleichen
+
+Admin-Endpunkte verlangen ein gültiges OIDC-Bearer-Token mit Keycloak-Realm-Rolle `admin` und passender API-Audience. Kontaktdaten werden nur intern gespeichert. Wix bleibt optional; Stripe und EasyVerein sind nicht integriert.

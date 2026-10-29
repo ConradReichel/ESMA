@@ -1,0 +1,11 @@
+.git
+.dart_tool
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache
+**/node_modules
+**/dist
+app/build
+api/local.settings.json
+.env
+backups

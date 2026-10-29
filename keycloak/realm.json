@@ -1,0 +1,48 @@
+{
+  "realm": "esma",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "realm": [
+      { "name": "admin", "description": "Zugriff auf die Vereinsverwaltung" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "esma-web",
+      "name": "ESMA Web",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "redirectUris": ["https://localhost/*", "https://app.example.org/*"],
+      "webOrigins": ["https://localhost", "https://app.example.org"],
+      "protocolMappers": [
+        {
+          "name": "ESMA API audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "esma-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "lightweight.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "esma-api",
+      "name": "ESMA API",
+      "enabled": true,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    }
+  ]
+}

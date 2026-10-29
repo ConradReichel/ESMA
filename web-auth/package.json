@@ -1,0 +1,7 @@
+{
+  "name": "esma-web-auth",
+  "private": true,
+  "scripts": { "build": "esbuild src/auth.js --bundle --minify --outfile=../app/web/auth.js" },
+  "dependencies": { "keycloak-js": "^26.2.0" },
+  "devDependencies": { "esbuild": "^0.25.0" }
+}

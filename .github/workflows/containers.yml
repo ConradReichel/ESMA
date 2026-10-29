@@ -1,0 +1,47 @@
+name: Build ESMA containers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            api/package-lock.json
+            web-auth/package-lock.json
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Test API and storage adapters
+        run: |
+          npm ci --prefix api
+          npm test --prefix api
+      - name: Build browser OIDC adapter
+        run: |
+          npm ci --prefix web-auth
+          npm run build --prefix web-auth
+      - name: Build Flutter web client
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build web --release
+      - name: Validate Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+      - name: Build API container
+        run: docker build --file api/Dockerfile --tag esma-api:ci .
+      - name: Build web container
+        run: docker build --file app/Dockerfile --tag esma-web:ci .

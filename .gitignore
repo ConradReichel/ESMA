@@ -1,11 +1,14 @@
 .DS_Store
+.env
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
 .pub-cache/
 app/build/
+app/web/auth.js
 api/node_modules/
+web-auth/node_modules/
 api/dist/
 api/schema.sql
 api/local.settings.json

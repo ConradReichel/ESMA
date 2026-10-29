@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'auth.dart';
 
 class EsmaApi {
   EsmaApi({http.Client? client}) : _client = client ?? http.Client();
@@ -11,16 +12,23 @@ class EsmaApi {
   Uri _uri(String path) => Uri.parse(baseUrl.isEmpty ? Uri.base.resolve(path).toString() : '$baseUrl$path');
 
   Future<Map<String, dynamic>> get(String path) async {
-    final response = await _client.get(_uri(path), headers: {'Accept': 'application/json'});
+    final response = await _client.get(_uri(path), headers: await _headers());
     return _decode(response);
   }
 
   Future<Map<String, dynamic>> send(String method, String path, [Map<String, dynamic>? body]) async {
     final request = http.Request(method, _uri(path));
-    request.headers['Content-Type'] = 'application/json';
+    request.headers.addAll(await _headers());
     if (body != null) request.body = jsonEncode(body);
     final streamed = await _client.send(request);
     return _decode(await http.Response.fromStream(streamed));
+  }
+
+  Future<Map<String, String>> _headers() async {
+    final headers = <String, String>{'Accept': 'application/json'};
+    final token = await authToken();
+    if (token.isNotEmpty) headers['Authorization'] = 'Bearer $token';
+    return headers;
   }
 
   Map<String, dynamic> _decode(http.Response response) {

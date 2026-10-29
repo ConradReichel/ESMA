@@ -1,0 +1,7 @@
+{$APP_DOMAIN:localhost} {
+	reverse_proxy frontend:80
+}
+
+{$AUTH_DOMAIN:auth.localhost} {
+	reverse_proxy keycloak:8080
+}

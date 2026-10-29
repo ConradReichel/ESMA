@@ -3,8 +3,8 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:web/web.dart' as web;
 import 'api.dart';
+import 'auth.dart';
 
 void main() => runApp(const EsmaApp());
 
@@ -43,7 +43,6 @@ class Shell extends StatefulWidget {
 
 class _ShellState extends State<Shell> {
   final api = EsmaApi();
-  final demoMode = const bool.fromEnvironment('ESMA_DEMO_MODE');
   String section = 'Übersicht';
   bool loading = true;
   bool signedIn = false;
@@ -56,16 +55,14 @@ class _ShellState extends State<Shell> {
   @override
   void initState() {
     super.initState();
-    if (demoMode) { signedIn = true; userName = 'Lokaler Demo-Admin'; }
     _load();
-    if (!demoMode) _loadUser();
+    _loadUser();
   }
 
   Future<void> _loadUser() async {
     try {
-      final principal = (await api.get('/.auth/me'))['clientPrincipal'];
-      if (principal is Map && (principal['userRoles'] as List? ?? []).contains('admin')) {
-        if (mounted) setState(() { signedIn = true; userName = principal['userDetails']?.toString() ?? 'Admin'; });
+      if (await initAuth()) {
+        if (mounted) setState(() { signedIn = true; userName = authUsername(); });
         await _load();
       }
     } catch (_) { /* Die statische Seite ist lokal oder noch nicht angemeldet. */ }
@@ -89,8 +86,8 @@ class _ShellState extends State<Shell> {
   }
 
   List<Map<String, dynamic>> _items(Map<String, dynamic> data) => (data['items'] as List? ?? []).cast<Map<String, dynamic>>();
-  void _signIn() => web.window.location.href = '/.auth/login/aad?post_login_redirect_uri=/admin';
-  void _signOut() => web.window.location.href = '/.auth/logout?post_logout_redirect_uri=/';
+  void _signIn() => authLogin();
+  void _signOut() => authLogout();
 
   @override
   Widget build(BuildContext context) {
