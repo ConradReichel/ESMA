@@ -19,7 +19,10 @@ class EsmaApi {
   Future<Map<String, dynamic>> send(String method, String path, [Map<String, dynamic>? body]) async {
     final request = http.Request(method, _uri(path));
     request.headers.addAll(await _headers());
-    if (body != null) request.body = jsonEncode(body);
+    if (body != null) {
+      request.headers['Content-Type'] = 'application/json; charset=utf-8';
+      request.body = jsonEncode(body);
+    }
     final streamed = await _client.send(request);
     return _decode(await http.Response.fromStream(streamed));
   }

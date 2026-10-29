@@ -315,13 +315,25 @@ class ChickenDialog extends StatefulWidget {
 }
 
 class _ChickenDialogState extends State<ChickenDialog> {
-  late final fields = <String, TextEditingController>{for (final key in ['number', 'name', 'ringNumber', 'breed', 'sex', 'color', 'hatchYear', 'description']) key: TextEditingController(text: widget.initial[key]?.toString() ?? '')};
+  late final fields = <String, TextEditingController>{for (final key in ['number', 'name', 'ringNumber', 'breed', 'sex', 'description']) key: TextEditingController(text: widget.initial[key]?.toString() ?? '')};
+  late int? hatchYear = int.tryParse(widget.initial['hatchYear']?.toString() ?? '');
+  late String color = widget.initial['color']?.toString() ?? '';
   late String status = widget.initial['status']?.toString() ?? 'available';
   late bool published = widget.initial['published'] == true;
   Uint8List? imageBytes;
   String? imageMimeType;
   bool clearImage = false;
   bool picking = false;
+  List<int> get yearOptions {
+    final years = <int>{...List.generate(DateTime.now().year - 1949, (i) => DateTime.now().year - i)};
+    if (hatchYear != null) years.add(hatchYear!);
+    return years.toList()..sort((a, b) => b.compareTo(a));
+  }
+  List<String> get colorOptions {
+    final colors = <String>{'', 'Braun', 'Weiß', 'Schwarz', 'Grau', 'Rot', 'Gescheckt', 'Bunt'};
+    if (color.isNotEmpty) colors.add(color);
+    return colors.toList()..sort((a, b) => a.isEmpty ? -1 : b.isEmpty ? 1 : a.compareTo(b));
+  }
   @override void dispose() { for (final c in fields.values) { c.dispose(); } super.dispose(); }
   Widget input(String key, String label, {int lines = 1}) => Padding(padding: const EdgeInsets.only(bottom: 12), child: TextField(controller: fields[key], maxLines: lines, decoration: InputDecoration(labelText: label)));
   Future<void> _pickImage() async {
@@ -373,14 +385,14 @@ class _ChickenDialogState extends State<ChickenDialog> {
     title: Text(widget.initial['id'] == null ? 'Huhn anlegen' : 'Huhn bearbeiten', style: const TextStyle(color: ink)),
     content: SizedBox(width: 460, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
       Row(children: [Expanded(child: input('number', 'Huhnnummer *')), const SizedBox(width: 12), Expanded(child: input('name', 'Name *'))]),
-      Row(children: [Expanded(child: input('breed', 'Rasse')), const SizedBox(width: 12), Expanded(child: input('hatchYear', 'Schlupfjahr'))]),
-      Row(children: [Expanded(child: input('ringNumber', 'Ringnummer')), const SizedBox(width: 12), Expanded(child: input('color', 'Farbe'))]),
+      Row(children: [Expanded(child: input('breed', 'Rasse')), const SizedBox(width: 12), Expanded(child: DropdownButtonFormField<int?>(initialValue: hatchYear, decoration: const InputDecoration(labelText: 'Schlupfjahr'), items: [const DropdownMenuItem<int?>(value: null, child: Text('Nicht angegeben')), ...yearOptions.map((year) => DropdownMenuItem<int?>(value: year, child: Text(year.toString())))], onChanged: (value) => setState(() => hatchYear = value))]),
+      Row(children: [Expanded(child: input('ringNumber', 'Ringnummer')), const SizedBox(width: 12), Expanded(child: DropdownButtonFormField<String>(initialValue: color, decoration: const InputDecoration(labelText: 'Farbe'), items: colorOptions.map((value) => DropdownMenuItem(value: value, child: Text(value.isEmpty ? 'Nicht angegeben' : value))).toList(), onChanged: (value) => setState(() => color = value ?? ''))]),
       _imageControl(), input('description', 'Kurzbeschreibung', lines: 3),
       DropdownButtonFormField<String>(initialValue: status, decoration: const InputDecoration(labelText: 'Status'), items: const [DropdownMenuItem(value: 'available', child: Text('Verfügbar')), DropdownMenuItem(value: 'reserved', child: Text('Reserviert')), DropdownMenuItem(value: 'sponsored', child: Text('Vergeben')), DropdownMenuItem(value: 'inactive', child: Text('Inaktiv'))], onChanged: (v) => setState(() => status = v ?? 'available')),
       SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Auf der Website veröffentlichen', style: TextStyle(fontSize: 13)), value: published, onChanged: (v) => setState(() => published = v)),
     ]))),
     actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')), FilledButton(onPressed: picking ? null : () {
-      final values = <String, dynamic>{'number': fields['number']!.text, 'name': fields['name']!.text, 'ringNumber': fields['ringNumber']!.text, 'breed': fields['breed']!.text, 'sex': fields['sex']!.text.isEmpty ? 'Huhn' : fields['sex']!.text, 'color': fields['color']!.text, 'hatchYear': int.tryParse(fields['hatchYear']!.text), 'description': fields['description']!.text, 'status': status, 'published': published};
+      final values = <String, dynamic>{'number': fields['number']!.text, 'name': fields['name']!.text, 'ringNumber': fields['ringNumber']!.text, 'breed': fields['breed']!.text, 'sex': fields['sex']!.text.isEmpty ? 'Huhn' : fields['sex']!.text, 'color': color, 'hatchYear': hatchYear, 'description': fields['description']!.text, 'status': status, 'published': published};
       if (imageBytes != null) { values['imageData'] = base64Encode(imageBytes!); values['imageMimeType'] = imageMimeType; }
       if (clearImage) values['clearImage'] = true;
       Navigator.pop(context, values);
