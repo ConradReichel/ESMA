@@ -5,7 +5,6 @@
 .pub-cache
 **/node_modules
 **/dist
-app/build
 api/local.settings.json
 .env
 backups

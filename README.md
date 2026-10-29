@@ -13,7 +13,7 @@ Flutter-Webanwendung zur Verwaltung von Hühnerprofilen, Patenschaften und Inter
 
 ## Betrieb auf einem Server
 
-Voraussetzungen: Docker Engine und Docker Compose v2. Weise die DNS-Namen für App und Anmeldung auf die öffentliche IP des Servers und erlaube eingehend TCP 80/443.
+Voraussetzungen: Docker Engine, Docker Compose v2, Node.js 22, Flutter und Web-Support. Weise die DNS-Namen für App und Anmeldung auf die öffentliche IP des Servers und erlaube eingehend TCP 80/443.
 
 ```sh
 cp .env.example .env
@@ -22,6 +22,9 @@ cp .env.example .env
 Setze in `.env` `APP_DOMAIN`, `AUTH_DOMAIN` sowie zwei starke, getrennte Passwörter für PostgreSQL und den Keycloak-Administrationszugang. Wähle den gewünschten Speicher mit `STORAGE_DRIVER` (siehe unten). Starte anschließend:
 
 ```sh
+npm ci --prefix web-auth
+npm run build --prefix web-auth
+cd app && flutter pub get && flutter build web --release && cd ..
 docker compose up -d --build
 ```
 
@@ -79,6 +82,7 @@ Voraussetzungen: Flutter, Node.js 22 und Docker Compose. Kopiere `.env.example` 
 ```sh
 npm --prefix web-auth install
 npm --prefix web-auth run build
+cd app && flutter pub get && flutter build web --release && cd ..
 docker compose up -d --build
 ```
 

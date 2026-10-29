@@ -7,7 +7,13 @@ window.esmaAuthInit = async () => {
   const config = window.ESMA_OIDC_CONFIG || {};
   if (!config.url || !config.realm || !config.clientId) return false;
   client = new Keycloak({ url: config.url, realm: config.realm, clientId: config.clientId });
-  const authenticated = await client.init({ onLoad: 'check-sso', pkceMethod: 'S256', checkLoginIframe: false });
+  const authenticated = await client.init({
+    onLoad: 'check-sso',
+    pkceMethod: 'S256',
+    checkLoginIframe: false,
+    silentCheckSsoRedirectUri: `${window.location.origin}/silent-check-sso.html`,
+    silentCheckSsoFallback: false,
+  });
   admin = Boolean(authenticated && client.tokenParsed?.realm_access?.roles?.includes('admin'));
   return admin;
 };

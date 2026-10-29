@@ -22,6 +22,7 @@ services:
       PGHOST: postgres
       PGPORT: 5432
       PGDATABASE: esma
+      PGUSER: ${POSTGRES_USER:-esma}
       POSTGRES_USER: ${POSTGRES_USER:-esma}
     depends_on:
       postgres:
