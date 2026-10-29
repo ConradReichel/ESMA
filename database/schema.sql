@@ -1,5 +1,13 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE TABLE IF NOT EXISTS app_settings (
+  key text PRIMARY KEY,
+  value text NOT NULL DEFAULT ''
+);
+INSERT INTO app_settings (key, value) VALUES
+  ('organization_name', ''), ('location', ''), ('logo_url', '')
+ON CONFLICT (key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS chickens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   number text NOT NULL UNIQUE,

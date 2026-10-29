@@ -121,7 +121,8 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
       const denied = await adminOnly(request);
       if (denied) return denied;
     }
-    const knownPath = path === '/api/v1/public/chickens' || path === '/api/v1/public/requests' || path.startsWith('/api/v1/public/images/') ||
+    const knownPath = path === '/api/v1/public/chickens' || path === '/api/v1/public/settings' || path === '/api/v1/public/requests' || path.startsWith('/api/v1/public/images/') ||
+      path === '/api/v1/admin/settings' ||
       path === '/api/v1/admin/chickens' || path.startsWith('/api/v1/admin/chickens/') ||
       path === '/api/v1/admin/sponsorships' || path.startsWith('/api/v1/admin/sponsorships/') ||
       path === '/api/v1/admin/requests' || path.startsWith('/api/v1/admin/requests/') ||
@@ -141,6 +142,24 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
     if (path === '/api/v1/public/chickens' && method === 'GET') {
       const result = await pool.query("SELECT id, number, name, breed, sex, color, hatch_year, description, image_url, status FROM chickens WHERE published = true AND status = 'available' ORDER BY number");
       return json(200, { items: result.rows.map(publicChicken), updatedAt: new Date().toISOString() });
+    }
+
+    if (path === '/api/v1/public/settings' && method === 'GET') {
+      const result = await pool.query('SELECT key, value FROM app_settings');
+      return json(200, Object.fromEntries(result.rows.map((row) => [row.key, row.value])));
+    }
+    if (path === '/api/v1/admin/settings' && method === 'PUT') {
+      const data = await bodyOf(request);
+      const values: Record<string, unknown> = {
+        organization_name: data.organizationName,
+        location: data.location,
+        logo_url: data.logoUrl,
+      };
+      for (const [key, value] of Object.entries(values)) {
+        await pool.query('INSERT INTO app_settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', [key, text(value, key === 'logo_url' ? 2000 : 120)]);
+      }
+      const result = await pool.query('SELECT key, value FROM app_settings');
+      return json(200, Object.fromEntries(result.rows.map((row) => [row.key, row.value])));
     }
 
     if (path === '/api/v1/public/requests' && method === 'POST') {

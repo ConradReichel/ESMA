@@ -17,7 +17,7 @@ class EsmaApp extends StatelessWidget {
   const EsmaApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'ESMA · Hühnerpatenmanager',
+        title: 'Tierpatenschaften',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: true,
@@ -51,6 +51,8 @@ class _ShellState extends State<Shell> {
   List<Map<String, dynamic>> chickens = [];
   List<Map<String, dynamic>> inquiries = [];
   List<Map<String, dynamic>> sponsorships = [];
+  Map<String, dynamic> settings = {'organization_name': '', 'location': '', 'logo_url': ''};
+  String get _orgLine => [settings['organization_name'], settings['location']].where((v) => v != null && v.toString().trim().isNotEmpty).join(' · ');
 
   @override
   void initState() {
@@ -71,6 +73,7 @@ class _ShellState extends State<Shell> {
   Future<void> _load() async {
     if (mounted) setState(() { loading = true; error = null; });
     try {
+      settings = await api.get('/api/v1/public/settings');
       if (signedIn) {
         final results = await Future.wait([
           api.get('/api/v1/admin/chickens'),
@@ -88,6 +91,31 @@ class _ShellState extends State<Shell> {
   List<Map<String, dynamic>> _items(Map<String, dynamic> data) => (data['items'] as List? ?? []).cast<Map<String, dynamic>>();
   void _signIn() => authLogin();
   void _signOut() => authLogout();
+
+  Widget _brandName() => Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [Text(settings['organization_name']?.toString().isNotEmpty == true ? settings['organization_name'] : 'Tierpatenschaften', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: ink)), const Text('Verwaltung', style: TextStyle(fontSize: 11, color: Colors.black54))]);
+
+  Widget _settingsPage() => _pageBody(ListView(padding: const EdgeInsets.fromLTRB(34, 30, 34, 40), children: [
+    _pageTitle('Einstellungen', 'Organisationsangaben und Logo für alle Ansichten festlegen.'),
+    const SizedBox(height: 20),
+    _settingField('Organisationsname', 'organization_name'),
+    const SizedBox(height: 14),
+    _settingField('Standort (optional)', 'location'),
+    const SizedBox(height: 14),
+    _settingField('Logo-URL (optional)', 'logo_url'),
+    const SizedBox(height: 8),
+    const Text('Verwende eine öffentlich erreichbare HTTPS-Bildadresse für das Logo.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+    const SizedBox(height: 18),
+    Align(alignment: Alignment.centerLeft, child: FilledButton.icon(onPressed: _saveSettings, icon: const Icon(Icons.save_outlined, size: 18), label: const Text('Speichern'))),
+  ]));
+
+  Widget _settingField(String label, String key) => TextFormField(initialValue: settings[key]?.toString() ?? '', decoration: InputDecoration(labelText: label), onChanged: (value) => settings[key] = value);
+
+  Future<void> _saveSettings() async {
+    try {
+      settings = await api.send('PUT', '/api/v1/admin/settings', {'organizationName': settings['organization_name'] ?? '', 'location': settings['location'] ?? '', 'logoUrl': settings['logo_url'] ?? ''});
+      if (mounted) { setState(() {}); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Einstellungen gespeichert.'))); }
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()))); }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -109,9 +137,8 @@ class _ShellState extends State<Shell> {
     padding: const EdgeInsets.fromLTRB(22, 28, 16, 20),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
-        Container(width: 40, height: 40, decoration: BoxDecoration(color: forest, borderRadius: BorderRadius.circular(13)), child: const Icon(Icons.egg_alt_rounded, color: Colors.white)),
-        const SizedBox(width: 11),
-        const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('ESMA', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: ink)), Text('Patenmanager', style: TextStyle(fontSize: 11, color: Colors.black54))]),
+        const SizedBox(width: 3),
+        Expanded(child: settings['logo_url']?.toString().isNotEmpty == true ? Image.network(settings['logo_url'], height: 42, fit: BoxFit.contain, errorBuilder: (_, __, ___) => _brandName()) : _brandName()),
       ]),
       const SizedBox(height: 42),
       const Text('ARBEITSBEREICH', style: TextStyle(fontSize: 10, letterSpacing: 1.1, fontWeight: FontWeight.w700, color: Colors.black38)),
@@ -120,6 +147,7 @@ class _ShellState extends State<Shell> {
       _navItem('Hühner', Icons.egg_alt_outlined, badge: '${chickens.length}'),
       _navItem('Patenschaften', Icons.favorite_border_rounded, badge: '${sponsorships.length}'),
       _navItem('Anfragen', Icons.mark_email_unread_outlined, badge: '${inquiries.where((e) => e['status'] == 'new').length}'),
+      if (signedIn) _navItem('Einstellungen', Icons.tune_rounded),
       const Spacer(),
       Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: cream, borderRadius: BorderRadius.circular(14)), child: const Row(children: [Icon(Icons.eco_outlined, color: forest, size: 19), SizedBox(width: 9), Expanded(child: Text('Mit Herz für unsere Hühner', style: TextStyle(color: ink, fontSize: 11, height: 1.3)))])),
       const SizedBox(height: 17),
@@ -137,13 +165,14 @@ class _ShellState extends State<Shell> {
 
   Widget _topBar(bool compact) => Container(
     height: 76, padding: EdgeInsets.symmetric(horizontal: compact ? 18 : 38), decoration: const BoxDecoration(color: cream, border: Border(bottom: BorderSide(color: line))),
-    child: Row(children: [if (compact) Builder(builder: (context) => IconButton(onPressed: () => Scaffold.of(context).openDrawer(), icon: const Icon(Icons.menu))), if (compact) const SizedBox(width: 8), Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [Text(section, style: const TextStyle(fontSize: 20, color: ink, fontWeight: FontWeight.w700)), const Text('King Kong e.V.  ·  Hamburg', style: TextStyle(fontSize: 11, color: Colors.black45))])), if (!signedIn) TextButton.icon(onPressed: _signIn, icon: const Icon(Icons.login, size: 17), label: const Text('Anmelden')) else IconButton(tooltip: 'Aktualisieren', onPressed: _load, icon: const Icon(Icons.refresh_rounded, color: forest))]),
+    child: Row(children: [if (compact) Builder(builder: (context) => IconButton(onPressed: () => Scaffold.of(context).openDrawer(), icon: const Icon(Icons.menu))), if (compact) const SizedBox(width: 8), Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [Text(section, style: const TextStyle(fontSize: 20, color: ink, fontWeight: FontWeight.w700)), if (_orgLine.isNotEmpty) Text(_orgLine, style: const TextStyle(fontSize: 11, color: Colors.black45))])), if (!signedIn) TextButton.icon(onPressed: _signIn, icon: const Icon(Icons.login, size: 17), label: const Text('Anmelden')) else IconButton(tooltip: 'Aktualisieren', onPressed: _load, icon: const Icon(Icons.refresh_rounded, color: forest))]),
   );
 
   Widget _content() => switch (section) {
     'Hühner' => _chickenPage(),
     'Anfragen' => _inquiryPage(),
     'Patenschaften' => _sponsorshipPage(),
+    'Einstellungen' => _settingsPage(),
     _ => _dashboard(),
   };
 
@@ -170,7 +199,7 @@ class _ShellState extends State<Shell> {
 
   Widget _hero(int count) => Container(
     padding: const EdgeInsets.fromLTRB(27, 26, 20, 24), decoration: BoxDecoration(color: const Color(0xFFE8EEE5), borderRadius: BorderRadius.circular(20)),
-    child: Row(children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.white.withValues(alpha: .72), borderRadius: BorderRadius.circular(20)), child: const Text('HOFLEBEN  ·  HAMBURG', style: TextStyle(color: forest, fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.1))), const SizedBox(height: 14), const Text('Guten Tag 👋', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: ink)), const SizedBox(height: 7), Text('$count Hühner freuen sich gerade über eine Patenschaft.', style: const TextStyle(fontSize: 13, color: Color(0xFF667468))), const SizedBox(height: 17), FilledButton.icon(onPressed: signedIn ? _createChicken : _signIn, icon: Icon(signedIn ? Icons.add : Icons.login, size: 17), label: Text(signedIn ? 'Huhn hinzufügen' : 'Als Admin anmelden'), style: FilledButton.styleFrom(backgroundColor: forest, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)))])), const SizedBox(width: 12), if (MediaQuery.sizeOf(context).width > 650) Container(width: 126, height: 126, decoration: BoxDecoration(color: const Color(0xFFD7E2D2), borderRadius: BorderRadius.circular(26)), child: const Center(child: Text('🐔', style: TextStyle(fontSize: 71))))]),
+    child: Row(children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [if (_orgLine.isNotEmpty) Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.white.withValues(alpha: .72), borderRadius: BorderRadius.circular(20)), child: Text(_orgLine.toUpperCase(), style: const TextStyle(color: forest, fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.1))), const SizedBox(height: 14), const Text('Guten Tag 👋', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: ink)), const SizedBox(height: 7), Text('$count Hühner freuen sich gerade über eine Patenschaft.', style: const TextStyle(fontSize: 13, color: Color(0xFF667468))), const SizedBox(height: 17), FilledButton.icon(onPressed: signedIn ? _createChicken : _signIn, icon: Icon(signedIn ? Icons.add : Icons.login, size: 17), label: Text(signedIn ? 'Huhn hinzufügen' : 'Als Admin anmelden'), style: FilledButton.styleFrom(backgroundColor: forest, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)))])), const SizedBox(width: 12), if (MediaQuery.sizeOf(context).width > 650) Container(width: 126, height: 126, decoration: BoxDecoration(color: const Color(0xFFD7E2D2), borderRadius: BorderRadius.circular(26)), child: const Center(child: Text('🐔', style: TextStyle(fontSize: 71))))]),
   );
 
   Widget _stat(String title, String value, IconData icon, Color tone) => Container(padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: line)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Container(width: 34, height: 34, decoration: BoxDecoration(color: tone, borderRadius: BorderRadius.circular(11)), child: Icon(icon, size: 17, color: forest)), Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: ink)), Text(title, style: const TextStyle(fontSize: 11, color: Colors.black54))]));
