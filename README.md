@@ -30,7 +30,13 @@ docker compose up -d --build
 
 Caddy stellt für öffentliche Domains automatisch HTTPS bereit. Öffne `https://AUTH_DOMAIN`, melde dich mit dem Keycloak-Bootstrap-Konto an und passe unter **Clients → esma-web** `Valid redirect URIs` und `Web origins` an die Domain aus `APP_DOMAIN` an. Die Realm-Voreinstellung enthält Beispielwerte für `app.example.org` und `localhost`.
 
-Wenn eine externe Website (zum Beispiel Wix) die öffentliche API direkt im Browser aufruft, setze `CORS_ORIGIN` auf genau deren HTTPS-Origin. Bei der üblichen Bereitstellung über dieselbe App-Domain ist kein zusätzlicher CORS-Origin nötig.
+Wenn eine externe Website (zum Beispiel Wix) die öffentliche API direkt im Browser aufruft, trage deren HTTPS-Origin unter **Einstellungen** ein. Bei der üblichen Bereitstellung über dieselbe App-Domain ist kein zusätzlicher CORS-Origin nötig.
+
+## Laufzeiteinstellungen
+
+Nach der Anmeldung mit einem Admin-Konto werden Vereinsname, Standort, Logo, öffentliche App-URL, zusätzliche CORS-Origin, Wix-Site-/Collection-ID und die Annahme öffentlicher Anfragen unter **Einstellungen** verwaltet. Diese Werte werden in PostgreSQL gespeichert und wirken ohne Container-Neustart. Die Wix-Synchronisierung muss dort aktiviert werden. Der Wix-API-Schlüssel bleibt als Geheimnis in `WIX_API_KEY` in `.env`; die Oberfläche zeigt nur an, ob er im Deployment vorhanden ist.
+
+Die Admin-API gibt keine Zugangsdaten zurück. Datenbank-, OIDC-, Domain- und Bildspeicher-Konfiguration bleiben Deployment-Einstellungen. Ein leerer öffentlicher App-URL-Wert verwendet `PUBLIC_APP_URL` aus Compose; eine leere CORS-Origin verwendet den optionalen `CORS_ORIGIN`-Fallback.
 
 Lege in Keycloak interne Benutzer an und weise ihnen die Realm-Rolle `admin` zu. Der Keycloak-Administrationszugang dient nur der Einrichtung und sollte nicht für den täglichen Zugriff verwendet werden. Externe OIDC-Anbieter können unter **Identity providers** ergänzt werden. Weise externen Benutzern die ESMA-Rolle nur über einen passenden, kontrollierten Mapper zu.
 
@@ -50,7 +56,7 @@ Setze `STORAGE_DRIVER` in `.env` auf einen der folgenden Werte:
 | `s3` | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`; optional `S3_FORCE_PATH_STYLE` | S3-kompatible Dienste wie Hetzner, IONOS, MinIO oder andere Anbieter |
 | `azure-blob` | `AZURE_STORAGE_CONNECTION_STRING`, optional `AZURE_STORAGE_CONTAINER` | Bestehende Azure-Bildspeicher |
 
-Die API speichert nur UUID-basierte Objektschlüssel, hält Speicherbereiche privat und liefert Bilder über `/api/v1/public/images/{chickenId}` aus. `s3` verwendet die AWS S3 API; Anbieter-spezifische Endpunkte und Zugangsdaten stehen ausschließlich in `.env`. Der S3-Treiber legt den Bucket nicht an: Er muss vorher beim Anbieter angelegt werden. Fehlen für den ausgewählten Treiber Zugangsdaten, beendet sich die API mit einer verständlichen Fehlermeldung.
+Die API speichert nur UUID-basierte Objektschlüssel, hält Speicherbereiche privat und liefert Bilder über `/api/v1/public/images/{chickenId}` aus. `s3` verwendet die AWS S3 API; Anbieter-spezifische Endpunkte und Zugangsdaten stehen ausschließlich in `.env`. Der Wix-API-Schlüssel bleibt ebenfalls ein Deployment-Geheimnis; Site- und Collection-ID werden in den Einstellungen gepflegt. Der S3-Treiber legt den Bucket nicht an: Er muss vorher beim Anbieter angelegt werden. Fehlen für den ausgewählten Treiber Zugangsdaten, beendet sich die API mit einer verständlichen Fehlermeldung.
 
 Der lokale Treiber verwendet das persistente Docker-Volume `image_data`. Bei S3- oder Azure-Nutzung müssen Bilder über die jeweilige Storage-Sicherung gesichert werden. Ein Treiberwechsel kopiert keine Bestandsbilder automatisch.
 

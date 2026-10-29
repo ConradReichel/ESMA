@@ -31,8 +31,9 @@ function imageMime(bytes: Buffer): string | null {
   return null;
 }
 
-function publicImageUrl(id: string): string {
-  return `${(process.env.PUBLIC_APP_URL || '').replace(/\/$/, '')}/api/v1/public/images/${id}`;
+async function publicImageUrl(id: string): Promise<string> {
+  const settings = await readSettings(['public_app_url']);
+  return `${(settings.public_app_url || process.env.PUBLIC_APP_URL || '').replace(/\/$/, '')}/api/v1/public/images/${id}`;
 }
 
 const corsHeaders = {
@@ -40,7 +41,6 @@ const corsHeaders = {
   'Cache-Control': 'no-store',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-  ...(process.env.CORS_ORIGIN ? { 'Access-Control-Allow-Origin': process.env.CORS_ORIGIN } : {}),
 };
 
 function json(status: number, body: unknown): HttpResponseInit {
@@ -68,6 +68,31 @@ function text(value: unknown, max = 500): string {
 
 function isEmail(value: string): boolean { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value); }
 function isUuid(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
+
+const settingKeys = [
+  'organization_name', 'location', 'logo_url', 'public_app_url', 'cors_origin',
+  'wix_enabled', 'wix_site_id', 'wix_collection_id', 'inquiries_enabled',
+] as const;
+type SettingKey = typeof settingKeys[number];
+const publicSettingKeys: SettingKey[] = ['organization_name', 'location', 'logo_url', 'inquiries_enabled'];
+
+async function readSettings(keys: readonly SettingKey[] = settingKeys): Promise<Record<string, string>> {
+  const result = await pool.query('SELECT key,value FROM app_settings WHERE key = ANY($1::text[])', [keys]);
+  return Object.fromEntries(result.rows.map((row) => [row.key, row.value]));
+}
+
+function validOptionalUrl(value: string, label: string, allowHttp = false): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (!(allowHttp ? ['http:', 'https:'] : ['https:']).includes(parsed.protocol) || parsed.username || parsed.password) return `${label} muss eine gültige${allowHttp ? ' HTTP(S)' : ' HTTPS'}-Adresse sein.`;
+  } catch { return `${label} muss eine gültige${allowHttp ? ' HTTP(S)' : ' HTTPS'}-Adresse sein.`; }
+  return null;
+}
+
+function toAdminSettings(values: Record<string, string>): Record<string, unknown> {
+  return { ...values, wix_api_key_configured: Boolean(process.env.WIX_API_KEY) };
+}
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 async function isAdmin(request: HttpRequest): Promise<boolean> {
@@ -137,32 +162,56 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
       if (!download) return json(404, { error: 'Bild nicht gefunden.' });
       const mime = imageMime(download);
       if (!mime) return json(404, { error: 'Bild nicht gefunden.' });
-      return { status: 200, headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff', ...(process.env.CORS_ORIGIN ? { 'Access-Control-Allow-Origin': process.env.CORS_ORIGIN } : {}) }, body: download };
+      return { status: 200, headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff' }, body: download };
     }
     if (path === '/api/v1/public/chickens' && method === 'GET') {
       const result = await pool.query("SELECT id, number, name, breed, sex, color, hatch_year, description, image_url, status FROM chickens WHERE published = true AND status = 'available' ORDER BY number");
-      return json(200, { items: result.rows.map(publicChicken), updatedAt: new Date().toISOString() });
+      return json(200, { items: await Promise.all(result.rows.map(publicChicken)), updatedAt: new Date().toISOString() });
     }
 
     if (path === '/api/v1/public/settings' && method === 'GET') {
-      const result = await pool.query('SELECT key, value FROM app_settings');
-      return json(200, Object.fromEntries(result.rows.map((row) => [row.key, row.value])));
+      return json(200, await readSettings(publicSettingKeys));
+    }
+    if (path === '/api/v1/admin/settings' && method === 'GET') {
+      return json(200, toAdminSettings(await readSettings()));
     }
     if (path === '/api/v1/admin/settings' && method === 'PUT') {
       const data = await bodyOf(request);
-      const values: Record<string, unknown> = {
-        organization_name: data.organizationName,
-        location: data.location,
-        logo_url: data.logoUrl,
+      const values: Record<SettingKey, string> = {
+        organization_name: text(data.organizationName, 120),
+        location: text(data.location, 160),
+        logo_url: text(data.logoUrl, 2000),
+        public_app_url: text(data.publicAppUrl, 500),
+        cors_origin: text(data.corsOrigin, 500),
+        wix_enabled: data.wixEnabled === true ? 'true' : 'false',
+        wix_site_id: text(data.wixSiteId, 200),
+        wix_collection_id: text(data.wixCollectionId, 200),
+        inquiries_enabled: data.inquiriesEnabled === true ? 'true' : 'false',
       };
-      for (const [key, value] of Object.entries(values)) {
-        await pool.query('INSERT INTO app_settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', [key, text(value, key === 'logo_url' ? 2000 : 120)]);
+      const logoError = validOptionalUrl(values.logo_url, 'Logo-URL');
+      const appUrlError = validOptionalUrl(values.public_app_url, 'Öffentliche App-URL');
+      const corsError = validOptionalUrl(values.cors_origin, 'CORS-Origin', true);
+      if (logoError || appUrlError || corsError) return json(400, { error: logoError || appUrlError || corsError });
+      if (values.cors_origin) {
+        const parsed = new URL(values.cors_origin);
+        if (parsed.origin !== values.cors_origin || parsed.pathname !== '/' || parsed.search || parsed.hash) return json(400, { error: 'CORS-Origin darf nur aus Protokoll und Host bestehen.' });
       }
-      const result = await pool.query('SELECT key, value FROM app_settings');
-      return json(200, Object.fromEntries(result.rows.map((row) => [row.key, row.value])));
+      if (values.wix_enabled === 'true' && (!values.wix_site_id || !values.wix_collection_id)) return json(400, { error: 'Für Wix müssen Site-ID und Collection-ID eingetragen sein.' });
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const [key, value] of Object.entries(values)) {
+          await client.query('INSERT INTO app_settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', [key, value]);
+        }
+        await client.query('COMMIT');
+      } catch (error) { await client.query('ROLLBACK'); throw error; }
+      finally { client.release(); }
+      return json(200, toAdminSettings(await readSettings()));
     }
 
     if (path === '/api/v1/public/requests' && method === 'POST') {
+      const currentSettings = await readSettings(['inquiries_enabled']);
+      if (currentSettings.inquiries_enabled === 'false') return json(403, { error: 'Anfragen sind derzeit deaktiviert.' });
       const body = await bodyOf(request);
       const firstName = text(body.firstName, 100), lastName = text(body.lastName, 100), email = text(body.email, 254).toLowerCase();
       if (!firstName || !lastName || !isEmail(email) || body.privacyAccepted !== true) return json(400, { error: 'Bitte fülle alle Pflichtfelder aus und bestätige den Datenschutzhinweis.' });
@@ -200,7 +249,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
         const result = await pool.query(
           `INSERT INTO chickens (id,number,name,ring_number,breed,sex,color,hatch_year,description,image_url,status,published)
            VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-          [newId,number,name,text(data.ringNumber,50),text(data.breed,100),text(data.sex,40)||'Huhn',text(data.color,100),Number(data.hatchYear)||null,text(data.description,2000),image.bytes ? publicImageUrl(newId) : '',allowed(data.status,['available','reserved','sponsored','inactive'],'available'),data.published===true],
+          [newId,number,name,text(data.ringNumber,50),text(data.breed,100),text(data.sex,40)||'Huhn',text(data.color,100),Number(data.hatchYear)||null,text(data.description,2000),image.bytes ? await publicImageUrl(newId) : '',allowed(data.status,['available','reserved','sponsored','inactive'],'available'),data.published===true],
         );
         return json(201, chickenRow(result.rows[0]));
       }
@@ -227,7 +276,7 @@ async function handler(request: HttpRequest, context: InvocationContext): Promis
         }
         const current = await pool.query('SELECT image_url FROM chickens WHERE id=$1::uuid', [chickenId]);
         if (!current.rowCount) return json(404, { error: 'Huhn nicht gefunden.' });
-        const imageUrl = image.bytes ? publicImageUrl(chickenId) : data.clearImage === true ? '' : current.rows[0].image_url;
+        const imageUrl = image.bytes ? await publicImageUrl(chickenId) : data.clearImage === true ? '' : current.rows[0].image_url;
         const result = await pool.query(
           `UPDATE chickens SET number=$2,name=$3,ring_number=$4,breed=$5,sex=$6,color=$7,hatch_year=$8,description=$9,image_url=$10,status=$11,published=$12,updated_at=now()
            WHERE id=$1::uuid RETURNING *`,
@@ -315,18 +364,21 @@ function readImage(data: Record<string, unknown>): { bytes?: Buffer; mime?: stri
   return { bytes, mime };
 }
 function dateOrNull(value: unknown): string | null { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null; }
-function publicChicken(row: Record<string, unknown>) {
+async function publicChicken(row: Record<string, unknown>) {
   const imageUrl = row.image_url ?? row.imageUrl;
-  return { id:row.id,number:row.number,name:row.name,breed:row.breed,sex:row.sex,color:row.color,hatchYear:row.hatch_year??row.hatchYear,description:row.description,imageUrl: imageUrl ? publicImageUrl(String(row.id)) : '' };
+  return { id:row.id,number:row.number,name:row.name,breed:row.breed,sex:row.sex,color:row.color,hatchYear:row.hatch_year??row.hatchYear,description:row.description,imageUrl: imageUrl ? await publicImageUrl(String(row.id)) : '' };
 }
 
 async function syncWix(context: InvocationContext) {
-  const { WIX_API_KEY, WIX_SITE_ID, WIX_COLLECTION_ID }=process.env;
-  if(!WIX_API_KEY||!WIX_SITE_ID||!WIX_COLLECTION_ID) return { failed:true, synced:0, error:'Wix-Konfiguration fehlt.' };
+  const { WIX_API_KEY }=process.env;
+  const settings = await readSettings(['wix_enabled', 'wix_site_id', 'wix_collection_id']);
+  const WIX_SITE_ID = settings.wix_site_id;
+  const WIX_COLLECTION_ID = settings.wix_collection_id;
+  if(settings.wix_enabled !== 'true' || !WIX_API_KEY || !WIX_SITE_ID || !WIX_COLLECTION_ID) return { failed:true, synced:0, error:'Wix ist nicht aktiviert oder unvollständig konfiguriert. Prüfe die Einstellungen und den Wix-API-Schlüssel im Deployment.' };
   const chickens=await pool.query("SELECT id,number,name,breed,sex,color,hatch_year,description,image_url,status FROM chickens WHERE published=true ORDER BY number");
   let synced=0,failed=0;
   for(const row of chickens.rows) {
-    const payload={dataCollectionId:WIX_COLLECTION_ID,dataItem:{id:String(row.id),data:{number:row.number,name:row.name,breed:row.breed,sex:row.sex,color:row.color,hatchYear:row.hatch_year,description:row.description,imageUrl:row.image_url ? publicImageUrl(String(row.id)) : '',status:row.status,isAvailable:row.status==='available'}}};
+    const payload={dataCollectionId:WIX_COLLECTION_ID,dataItem:{id:String(row.id),data:{number:row.number,name:row.name,breed:row.breed,sex:row.sex,color:row.color,hatchYear:row.hatch_year,description:row.description,imageUrl:row.image_url ? await publicImageUrl(String(row.id)) : '',status:row.status,isAvailable:row.status==='available'}}};
     try {
       const response=await fetch('https://www.wixapis.com/wix-data/v2/items/save',{method:'POST',headers:{Authorization:WIX_API_KEY,'wix-site-id':WIX_SITE_ID,'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!response.ok) throw new Error(`Wix API HTTP ${response.status}`);
@@ -349,6 +401,18 @@ async function syncWix(context: InvocationContext) {
 }
 
 const api = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
+api.addHook('onSend', async (request, reply, payload) => {
+  try {
+    const settings = await readSettings(['cors_origin']);
+    const allowedOrigin = settings.cors_origin || process.env.CORS_ORIGIN || '';
+    const requestOrigin = request.headers.origin;
+    if (allowedOrigin && requestOrigin === allowedOrigin) {
+      reply.header('Access-Control-Allow-Origin', allowedOrigin);
+      reply.header('Vary', 'Origin');
+    }
+  } catch (error) { request.log.warn({ err: error }, 'Unable to read dynamic CORS setting'); }
+  return payload;
+});
 api.route({
   url: '/*', method: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   handler: async (request, reply) => {

@@ -51,7 +51,11 @@ class _ShellState extends State<Shell> {
   List<Map<String, dynamic>> chickens = [];
   List<Map<String, dynamic>> inquiries = [];
   List<Map<String, dynamic>> sponsorships = [];
-  Map<String, dynamic> settings = {'organization_name': '', 'location': '', 'logo_url': ''};
+  Map<String, dynamic> settings = {
+    'organization_name': '', 'location': '', 'logo_url': '', 'public_app_url': '', 'cors_origin': '',
+    'wix_enabled': 'false', 'wix_site_id': '', 'wix_collection_id': 'Patenhuehner',
+    'inquiries_enabled': 'true', 'wix_api_key_configured': false,
+  };
   String get _orgLine => [settings['organization_name'], settings['location']].where((v) => v != null && v.toString().trim().isNotEmpty).join(' · ');
 
   @override
@@ -76,11 +80,13 @@ class _ShellState extends State<Shell> {
       settings = await api.get('/api/v1/public/settings');
       if (signedIn) {
         final results = await Future.wait([
+          api.get('/api/v1/admin/settings'),
           api.get('/api/v1/admin/chickens'),
           api.get('/api/v1/admin/requests'),
           api.get('/api/v1/admin/sponsorships'),
         ]);
-        chickens = _items(results[0]); inquiries = _items(results[1]); sponsorships = _items(results[2]);
+        settings = {...settings, ...results[0]};
+        chickens = _items(results[1]); inquiries = _items(results[2]); sponsorships = _items(results[3]);
       } else {
         chickens = _items(await api.get('/api/v1/public/chickens'));
       }
@@ -95,24 +101,51 @@ class _ShellState extends State<Shell> {
   Widget _brandName() => Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [Text(settings['organization_name']?.toString().isNotEmpty == true ? settings['organization_name'] : 'Tierpatenschaften', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: ink)), const Text('Verwaltung', style: TextStyle(fontSize: 11, color: Colors.black54))]);
 
   Widget _settingsPage() => _pageBody(ListView(padding: const EdgeInsets.fromLTRB(34, 30, 34, 40), children: [
-    _pageTitle('Einstellungen', 'Organisationsangaben und Logo für alle Ansichten festlegen.'),
-    const SizedBox(height: 20),
+    _pageTitle('Einstellungen', 'Anwendungs- und Vereinsangaben verwalten.'),
+    const SizedBox(height: 22),
+    _settingsHeading('Organisation und Darstellung'),
     _settingField('Organisationsname', 'organization_name'),
-    const SizedBox(height: 14),
+    const SizedBox(height: 12),
     _settingField('Standort (optional)', 'location'),
-    const SizedBox(height: 14),
+    const SizedBox(height: 12),
     _settingField('Logo-URL (optional)', 'logo_url'),
-    const SizedBox(height: 8),
-    const Text('Verwende eine öffentlich erreichbare HTTPS-Bildadresse für das Logo.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+    const SizedBox(height: 5),
+    const Text('Das Logo muss über HTTPS öffentlich erreichbar sein.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+    const SizedBox(height: 24),
+    _settingsHeading('Öffentliche Website'),
+    _settingField('Öffentliche App-URL (optional)', 'public_app_url'),
+    const SizedBox(height: 5),
+    const Text('Wird für Bildlinks verwendet; leer übernimmt die Deployment-URL.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+    const SizedBox(height: 12),
+    _settingField('Zusätzlicher CORS-Origin (optional)', 'cors_origin'),
+    const SizedBox(height: 5),
+    const Text('Nur Protokoll und Host eintragen, zum Beispiel https://www.example.org.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+    const SizedBox(height: 24),
+    _settingsHeading('Wix-Synchronisierung'),
+    _settingField('Wix Site-ID', 'wix_site_id'),
+    const SizedBox(height: 12),
+    _settingField('Wix Collection-ID', 'wix_collection_id'),
+    SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Wix-Synchronisierung aktivieren'), value: settings['wix_enabled'] == 'true', onChanged: (value) => setState(() => settings['wix_enabled'] = value ? 'true' : 'false')),
+    Text(settings['wix_api_key_configured'] == true ? 'Wix-API-Schlüssel ist im Deployment hinterlegt.' : 'Der Wix-API-Schlüssel fehlt noch im Deployment.', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+    const SizedBox(height: 24),
+    _settingsHeading('Fachliche Optionen'),
+    SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Öffentliche Anfragen annehmen'), value: settings['inquiries_enabled'] != 'false', onChanged: (value) => setState(() => settings['inquiries_enabled'] = value ? 'true' : 'false')),
     const SizedBox(height: 18),
     Align(alignment: Alignment.centerLeft, child: FilledButton.icon(onPressed: _saveSettings, icon: const Icon(Icons.save_outlined, size: 18), label: const Text('Speichern'))),
   ]));
+
+  Widget _settingsHeading(String title) => Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: ink)));
 
   Widget _settingField(String label, String key) => TextFormField(initialValue: settings[key]?.toString() ?? '', decoration: InputDecoration(labelText: label), onChanged: (value) => settings[key] = value);
 
   Future<void> _saveSettings() async {
     try {
-      settings = await api.send('PUT', '/api/v1/admin/settings', {'organizationName': settings['organization_name'] ?? '', 'location': settings['location'] ?? '', 'logoUrl': settings['logo_url'] ?? ''});
+      settings = await api.send('PUT', '/api/v1/admin/settings', {
+        'organizationName': settings['organization_name'] ?? '', 'location': settings['location'] ?? '', 'logoUrl': settings['logo_url'] ?? '',
+        'publicAppUrl': settings['public_app_url'] ?? '', 'corsOrigin': settings['cors_origin'] ?? '',
+        'wixEnabled': settings['wix_enabled'] == 'true', 'wixSiteId': settings['wix_site_id'] ?? '', 'wixCollectionId': settings['wix_collection_id'] ?? '',
+        'inquiriesEnabled': settings['inquiries_enabled'] != 'false',
+      });
       if (mounted) { setState(() {}); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Einstellungen gespeichert.'))); }
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()))); }
   }
@@ -209,7 +242,10 @@ class _ShellState extends State<Shell> {
     _pageTitle('Hühnerprofile', 'Stammdaten und Patenschaftsstatus verwalten.', action: signedIn ? FilledButton.icon(onPressed: _createChicken, icon: const Icon(Icons.add, size: 17), label: const Text('Huhn hinzufügen')) : null),
     const SizedBox(height: 21),
     if (chickens.isEmpty) _empty('Keine Profile vorhanden', 'Melde dich als Admin an und lege ein Huhn an.', Icons.egg_outlined) else _chickenTable(chickens),
-    if (signedIn) ...[const SizedBox(height: 18), Align(alignment: Alignment.centerRight, child: OutlinedButton.icon(onPressed: _syncWix, icon: const Icon(Icons.sync, size: 17), label: const Text('Mit Wix synchronisieren')))],
+    if (signedIn && settings['wix_enabled'] == 'true') ...[
+      const SizedBox(height: 18),
+      Align(alignment: Alignment.centerRight, child: OutlinedButton.icon(onPressed: _syncWix, icon: const Icon(Icons.sync, size: 17), label: const Text('Mit Wix synchronisieren'))),
+    ],
     if (error != null) ...[const SizedBox(height: 14), _errorBanner(error!)],
   ]));
 
@@ -226,7 +262,7 @@ class _ShellState extends State<Shell> {
       if (MediaQuery.sizeOf(context).width > 620) Expanded(child: Text('${chicken['color'] ?? '—'}', style: const TextStyle(fontSize: 12, color: Colors.black54))),
       _statusChip(status),
       if (signedIn) IconButton(tooltip: 'Profil bearbeiten', onPressed: () => _editChicken(chicken), icon: const Icon(Icons.edit_outlined, size: 18, color: forest)),
-      if (!signedIn && status == 'available') IconButton(tooltip: 'Interesse zeigen', onPressed: () => _inquiryForm(chicken), icon: const Icon(Icons.favorite_border, size: 19, color: forest)),
+      if (!signedIn && status == 'available' && settings['inquiries_enabled'] != 'false') IconButton(tooltip: 'Interesse zeigen', onPressed: () => _inquiryForm(chicken), icon: const Icon(Icons.favorite_border, size: 19, color: forest)),
     ]));
   }
 

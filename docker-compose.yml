@@ -83,8 +83,6 @@ services:
       PUBLIC_APP_URL: https://${APP_DOMAIN:-localhost}
       CORS_ORIGIN: ${CORS_ORIGIN:-}
       WIX_API_KEY: ${WIX_API_KEY:-}
-      WIX_SITE_ID: ${WIX_SITE_ID:-}
-      WIX_COLLECTION_ID: ${WIX_COLLECTION_ID:-Patenhuehner}
     volumes:
       - image_data:/data/images
     depends_on:

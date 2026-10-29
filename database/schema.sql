@@ -5,7 +5,10 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value text NOT NULL DEFAULT ''
 );
 INSERT INTO app_settings (key, value) VALUES
-  ('organization_name', ''), ('location', ''), ('logo_url', '')
+  ('organization_name', ''), ('location', ''), ('logo_url', ''),
+  ('public_app_url', ''), ('cors_origin', ''),
+  ('wix_enabled', 'false'), ('wix_site_id', ''), ('wix_collection_id', 'Patenhuehner'),
+  ('inquiries_enabled', 'true')
 ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS chickens (
